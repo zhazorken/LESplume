@@ -1,0 +1,1 @@
+# keep logs/ in the repo so PBS -o/-e can write here (git ignores the *.out/*.log files).

@@ -2,13 +2,22 @@
 #PBS -A UGIT0046
 #PBS -N iceplume_cg
 #PBS -o logs/iceplume_cg.log
-#PBS -e logs/iceplume_cg.log
+#PBS -j oe
 #PBS -l walltime=11:59:00
 #PBS -q casper
-#PBS -l select=1:ncpus=4:ngpus=1:gpu_type=a100
+#PBS -l select=1:ncpus=4:mem=60gb:ngpus=1:gpu_type=a100
 #PBS -M kenzhao@unc.edu
+# mem=60gb is HOST RAM (not GPU): the GPU→host staging for 3-D NetCDF output and, especially,
+# the full-state checkpoint of a 153 M-cell run needs ~15-30 GB. The default (~10 gb) would OOM
+# at the first checkpoint. The A100-80GB nodes have plenty of host RAM; raise to 120gb if needed.
 #PBS -m ae
 #PBS -r n
+
+# PBS starts the job in $HOME, so cd to the submission directory (where you ran qsub) — that's
+# where iceplume.jl, Project.toml, and logs/ live. logs/ must exist because PBS also writes its
+# -o/-e files there; a missing logs/ is what makes the job requeue (R->Q).
+cd "$PBS_O_WORKDIR" || exit 1
+mkdir -p logs
 
 # Geometric-terminus SGD-plume LES (Oceananigans 0.109, CG solver). One job = one case:
 #     qsub -v CASE=vertical submit_pbs.sh
