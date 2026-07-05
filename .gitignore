@@ -6,6 +6,9 @@ anims/
 checkpoint_*
 logs/*.out
 logs/*.log
+*.mp4
+*.gif
+# (curated figures under figures/ are committed; force-add a movie there with `git add -f` if needed)
 
 # resolved Julia manifest: let each machine resolve fresh (laptop vs cluster Julia differ)
 Manifest.toml

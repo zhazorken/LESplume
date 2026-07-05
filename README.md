@@ -60,6 +60,35 @@ actually captures the subducting intrusion (the gravity-tilt `newLES` overcut co
 Flags mirror `newLES` (`--discharge`, `--outlet_w/h`, `--Lz`, `--Lx`, `--fine_x`, `--dz`,
 `--stop_time`, `--output_interval`, `--wall_time_limit`, `--terminus`, `--arch`, `--simname`).
 
+## Visualizing results — plot where the data lives, move only the light files
+
+The 3-D `*_fields.nc` are ~7 GB each; the 2-D `*_midy.nc`/`*_face.nc` slices (every 10 s) and
+`*_timeavg.nc` are small. So:
+
+1. **On Casper — make PNGs + movies next to the data** (no need to move the big files):
+   ```bash
+   ./postprocess.sh                       # both cases: quick-look PNGs + w/T/S movies from $OUTDIR
+   ```
+   (`postprocess.sh` loads NCAR's `conda`/`npl` env, then runs `plot_quicklook.py` and
+   `make_movie.py`. `make_movie.py` animates the 10 s slice series to mp4/gif, ice blanked,
+   color scales fixed.)
+
+2. **On your laptop — pull just the light files** (slices, time-average, PNGs, movies):
+   ```bash
+   ./fetch_results.sh                     # rsync into ./output/  (edit REMOTE for your username)
+   python3 plot_quicklook.py cg_overcut634 --dir output    # re-plot / explore interactively
+   ```
+
+3. **Need 3-D volume data locally?** Subset it on Casper first, then fetch the small file:
+   ```bash
+   module load nco
+   ncks -v w,T,S -d xC,0.,600. -d time,-1 $OUTDIR/cg_overcut634_fields.nc near_overcut.nc
+   ```
+
+4. **GitHub is for code + curated figures**, not the working data/image stream: drop final
+   plots into `figures/` and commit those; run outputs (`output/`, `*.nc`, movies) are
+   gitignored.
+
 ## First-run CPU checks
 
 1. **Environment**: `Pkg.instantiate()` succeeds on the 0.109.2 Manifest (separate from newLES).
