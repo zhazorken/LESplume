@@ -43,7 +43,8 @@ function parse_cli()
         "Lz" => 150.0, "Ly" => 192.0, "Lx" => 500.0, "dz" => 0.75, "fine_x" => 375.0,
         "dx_max" => 18.6, "stop_time" => 45.0, "output_interval" => 300.0,   # dz/fine_x/dx_max = Ovall 2025
         "checkpoint_interval" => 5.0, "wall_time_limit" => Inf,
-        "cg_reltol" => 1e-5, "cg_maxiter" => 30.0)   # CG Poisson solver: looser reltol = fewer iters
+        "cg_reltol" => 1e-5, "cg_maxiter" => 30.0,   # CG Poisson solver: looser reltol = fewer iters
+        "outdir" => "")   # output + checkpoints dir; empty ⇒ <rundir>/output
     provided = Set{String}()
     for a in ARGS
         startswith(a, "--") || continue
@@ -232,10 +233,13 @@ T, S = model.tracers
 outputs = (; u, v, w, T, S, ω_y)
 prefix = cli["simname"]
 ckpt = "checkpoint_" * prefix
-pickup = any(startswith("$(ckpt)_iteration"), readdir(rundir))
+# Output + checkpoints go to --outdir (default <rundir>/output). Keep this OFF the git repo
+# and on /glade/work or scratch for cluster runs.
+outdir = isempty(cli["outdir"]) ? joinpath(rundir, "output") : cli["outdir"]
+mkpath(outdir)
+pickup = any(startswith("$(ckpt)_iteration"), readdir(outdir))
 overwrite = !pickup
-pickup && @warn "Checkpoint found for $prefix — resuming."
-outdir = joinpath(rundir, "output"); mkpath(outdir)
+pickup && @warn "Checkpoint found for $prefix in $outdir — resuming."
 
 # Metadata so the (non-rotating) quick-look can blank the immersed ice and label geometry.
 # y-z "face" slice: a few cells into the fluid off the grounding line (a fixed near-wall x=1
@@ -272,7 +276,7 @@ simulation.output_writers[:avg] = NetCDFWriter(model, (; u,v,w,T,S,uw,wT,wS);
 
 simulation.output_writers[:checkpointer] = Checkpointer(model;
     schedule = TimeInterval(cli["checkpoint_interval"] * minutes),
-    dir = rundir, prefix = ckpt, cleanup = true)
+    dir = outdir, prefix = ckpt, cleanup = true)
 #---
 
 @info "Starting run..." pickup stop_minutes=cli["stop_time"]

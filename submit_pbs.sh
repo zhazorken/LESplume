@@ -37,6 +37,10 @@ echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES ; Julia: $($JULIA --version 2>/
 
 CASE=${CASE:-overcut}
 DOMAIN="--Ly=743 --Lx=4000 --fine_x=375 --dz=0.75 --dx_max=18.6"     # GPU-only domain
+# Outputs + checkpoints go here (a new folder on /glade/work, OFF the git repo). Override with
+# `qsub -v CASE=overcut,OUTDIR=/glade/derecho/scratch/$USER/LESplume submit_pbs.sh` for scratch.
+OUTDIR="${OUTDIR:-/glade/work/$USER/LESplume_runs}"
+mkdir -p "$OUTDIR"
 if [ "$CASE" = "vertical" ]; then
     ARGS="--simname=cg_vertical --face_angle=90"
 else
@@ -47,7 +51,7 @@ fi
 # 45 min run, 15-min time-average. Auto-resumes from a checkpoint if the job is re-submitted.
 time $JULIA --project --pkgimages=no iceplume.jl \
     $ARGS $DOMAIN --discharge=150 --outlet_w=24 --outlet_h=6 --Lz=150 \
-    --stop_time=45 --output_interval=900 --wall_time_limit=11.5 \
+    --stop_time=45 --output_interval=900 --wall_time_limit=11.5 --outdir="$OUTDIR" \
     2>&1 | tee logs/${CASE}.out
 
 qstat -f $PBS_JOBID >> logs/iceplume_cg.log

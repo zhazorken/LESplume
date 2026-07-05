@@ -50,15 +50,16 @@ re-submitted. Watch `logs/<case>.out`.
 
 ## 4. Get results back
 
-Outputs land in `output/` (NetCDF). The 2-D slices and 15-min time-average are the light files;
+Outputs + checkpoints land in **`/glade/work/$USER/LESplume_runs/`** (set by `OUTDIR` in
+`submit_pbs.sh`, off the git repo). The 2-D slices and 15-min time-average are the light files;
 the 3-D `*_fields.nc` are ~7 GB each (15-min cadence). Pull the light ones to your laptop and
-plot:
+plot (and copy anything you want to keep long-term to campaign `/glade/campaign/univ/uosc0035`):
 
 ```bash
-# on your laptop
-scp 'casper.hpc.ucar.edu:/glade/work/$USER/iceplume_cg/output/*_{midy,face,timeavg}.nc' output/
-python3 plot_quicklook.py cg_overcut634
-python3 plot_quicklook.py cg_vertical
+# on your laptop, from the repo folder
+scp 'derecho.hpc.ucar.edu:/glade/work/$USER/LESplume_runs/*_{midy,face,timeavg}.nc' output/
+python3 plot_quicklook.py cg_overcut634 --dir output
+python3 plot_quicklook.py cg_vertical   --dir output
 ```
 
 ## Notes / gotchas
