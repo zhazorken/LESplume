@@ -22,16 +22,16 @@
 #   the 2-D face/mid-y slices and the 15-min time-average carry the detail.
 #   If it's too heavy: drop to --Ly=384 (~79 M cells).
 
-module --force purge
-module load ncarenv/23.10
-module load cuda
-module list
+# No HPC modules are required: CUDA.jl bundles its own CUDA toolkit and uses the GPU node's
+# driver (libcuda). If CUDA.jl ever can't find the driver, `module load cuda` (first check the
+# exact name with `module avail cuda`) — but do NOT force-purge / load a fixed ncarenv version,
+# which on current Casper pulls a broken openmpi.
 
 # NOTE: this is a DIFFERENT (0.109) environment from ../newLES. Run ./setup_casper.sh once on
 # the cluster first (instantiates the env; no Manifest is shipped — it resolves fresh).
-# Point JULIA at your Julia and JULIA_DEPOT_PATH at YOUR depot (defaults below; override via
-# `qsub -v CASE=overcut,JULIA=/path/to/julia submit_pbs.sh` or edit here).
-export JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-/glade/work/$USER/.julia}"
+# Point JULIA at your Julia binary (juliaup: $HOME/.juliaup/bin/julia). The package depot
+# defaults to ~/.julia — the SAME one setup_casper.sh instantiated, so packages are found.
+# Override via `qsub -v CASE=overcut,JULIA=/path/to/julia submit_pbs.sh`.
 JULIA="${JULIA:-julia}"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES ; Julia: $($JULIA --version 2>/dev/null)"
 

@@ -9,17 +9,17 @@
 set -e
 cd "$(dirname "$0")"
 
-# --- modules (match submit_pbs.sh) ---
-module --force purge || true
-module load ncarenv/23.10 || true
-module load cuda || true
+# NOTE: instantiating Julia packages needs NO HPC modules (CUDA.jl bundles its own toolkit; the
+# GPU driver is only needed at run time), so this script just needs a working `julia`.
+# If `which julia` is empty, get one first:
+#   module spider julia                         # is there an NCAR Julia module? if so, module load it
+#   # else install juliaup (~1-2 GB, fine on the 100 GB home quota):
+#   curl -fsSL https://install.julialang.org | sh -s -- --yes && source ~/.bashrc
 
-# --- Julia: point JULIA at your build/module; keep the depot on /glade/work (big, writable) ---
-JULIA="${JULIA:-julia}"                                   # e.g. /glade/u/home/$USER/bin/julia-1.10.x/bin/julia
-export JULIA_DEPOT_PATH="${JULIA_DEPOT_PATH:-/glade/work/$USER/.julia}"
-mkdir -p "$JULIA_DEPOT_PATH"
-echo "Julia:  $($JULIA --version)"
-echo "Depot:  $JULIA_DEPOT_PATH"
+# --- Julia (packages go to the default depot ~/.julia unless you export JULIA_DEPOT_PATH) ---
+JULIA="${JULIA:-julia}"                                   # or a full path to your julia binary
+command -v "$JULIA" >/dev/null 2>&1 || { echo "ERROR: '$JULIA' not found — install Julia (see notes above) then re-run."; exit 1; }
+echo "Julia:  $($JULIA --version)   depot: ${JULIA_DEPOT_PATH:-$HOME/.julia}"
 
 # --- resolve + build the env (no Manifest is shipped, so this resolves 0.109.x fresh) ---
 $JULIA --project -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
