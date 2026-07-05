@@ -67,18 +67,22 @@ arch = cli["arch"] == "cpu" ? CPU() : cli["arch"] == "gpu" ? GPU() : (has_cuda_g
 @info "Simulation $(cli["simname"]) on $arch  ($(cli["terminus"]), face_angle=$(cli["face_angle"])°, Q=$(cli["discharge"]) m³/s)"
 #---
 
-#+++ Terminus geometry: immersed ice face x < x_face(z) = xf_a + xf_b·z
+#+++ Terminus geometry: ice = immersed solid  x < x_face(z) = xf_a + xf_b·z.
+# ALWAYS immersed (even vertical), so every case uses the GPU-safe immersed-drag path. A
+# continuous drag flux BC on the west *domain* boundary does not compile on the GPU in
+# Oceananigans 0.109 ("dynamic call to τv"); an immersed drag BC does.
 β = 90.0 - cli["face_angle"]              # tilt magnitude from vertical [deg]
 tanβ = tand(β)
-if β ≤ 0                                   # vertical: ice is the west wall, no immersed ice
-    xf_a, xf_b = 0.0, 0.0
-elseif cli["terminus"] == "undercut"       # top overhangs toward ocean
+x_wall = 3.0                               # thickness of the vertical ice slab [m] (a few cells)
+if β ≤ 0                                    # vertical: thin immersed wall (axis-aligned ⇒ no staircase)
+    xf_a, xf_b = x_wall, 0.0
+elseif cli["terminus"] == "undercut"        # top overhangs toward the ocean
     xf_a, xf_b = 0.0, tanβ
-else                                       # overcut (default): base sticks out, recedes up
+else                                        # overcut (default): base sticks out, recedes up
     xf_a, xf_b = cli["Lz"] * tanβ, -tanβ
 end
-immersed_ice = β > 0
-x_gl = xf_a                                # grounding-line x-position (base of ice)
+immersed_ice = true                         # always immerse the ice
+x_gl = xf_a                                 # grounding-line x-position (base of ice)
 #---
 
 #+++ Grid (x fine to fine_x then stretched; y,z uniform; vertical gravity so z = true height)
@@ -163,7 +167,8 @@ FS = Forcing(f_S, field_dependencies = :S, parameters = params)
 forcing = (u = Fu, T = FT, S = FS)
 #---
 
-#+++ Boundary conditions: quadratic drag on the ice (immersed for tilted, west wall for vertical)
+# Quadratic drag on the ICE, always via the IMMERSED boundary (GPU-safe for all cases; a
+# continuous drag BC on the west domain boundary won't compile on GPU in 0.109).
 @inline _spd(u,v,w) = √(u^2 + v^2 + w^2)
 @inline τu(x,y,z,t,u,v,w,p) = -p.Cᴰ * u * _spd(u,v,w)
 @inline τv(x,y,z,t,u,v,w,p) = -p.Cᴰ * v * _spd(u,v,w)
@@ -173,15 +178,9 @@ bcpar = (; Cᴰ = params.Cᴰ)
 τv_bc = FluxBoundaryCondition(τv, field_dependencies=(:u,:v,:w), parameters=bcpar)
 τw_bc = FluxBoundaryCondition(τw, field_dependencies=(:u,:v,:w), parameters=bcpar)
 
-if immersed_ice
-    u_bcs = FieldBoundaryConditions(immersed = τu_bc)
-    v_bcs = FieldBoundaryConditions(immersed = τv_bc)
-    w_bcs = FieldBoundaryConditions(immersed = τw_bc)
-else                              # vertical: drag on the west (ice) wall for the along-ice comps
-    u_bcs = FieldBoundaryConditions()
-    v_bcs = FieldBoundaryConditions(west = τv_bc)
-    w_bcs = FieldBoundaryConditions(west = τw_bc)
-end
+u_bcs = FieldBoundaryConditions(immersed = τu_bc)
+v_bcs = FieldBoundaryConditions(immersed = τv_bc)
+w_bcs = FieldBoundaryConditions(immersed = τw_bc)
 T_bcs = FieldBoundaryConditions(top = FluxBoundaryCondition(0))
 S_bcs = FieldBoundaryConditions(top = FluxBoundaryCondition(0))
 boundary_conditions = (u=u_bcs, v=v_bcs, w=w_bcs, T=T_bcs, S=S_bcs)
