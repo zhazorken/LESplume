@@ -1,0 +1,18 @@
+# generated output / large files (never commit)
+output/
+anims/
+*.nc
+*.jld2
+checkpoint_*
+logs/*.out
+logs/*.log
+
+# resolved Julia manifest: let each machine resolve fresh (laptop vs cluster Julia differ)
+Manifest.toml
+Manifest.toml.*
+
+# misc
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
