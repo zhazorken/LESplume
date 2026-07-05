@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#PBS -A UMCP0028
+#PBS -A UGIT0046
 #PBS -N iceplume_cg
 #PBS -o logs/iceplume_cg.log
 #PBS -e logs/iceplume_cg.log
