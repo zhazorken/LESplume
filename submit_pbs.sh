@@ -5,8 +5,7 @@
 #PBS -e logs/iceplume_cg.log
 #PBS -l walltime=11:59:00
 #PBS -q casper
-#PBS -l select=1:ncpus=1:ngpus=1
-#PBS -l gpu_type=a100
+#PBS -l select=1:ncpus=4:ngpus=1:gpu_type=a100
 #PBS -M kenzhao@unc.edu
 #PBS -m ae
 #PBS -r n
