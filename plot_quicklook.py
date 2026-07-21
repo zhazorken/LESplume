@@ -154,6 +154,45 @@ def plot_profiles(prefix, outdir):
     out = os.path.join(outdir, f"{prefix}_profiles.png"); fig.savefig(out, dpi=120); plt.close(fig)
     print("  wrote", out); ds.close()
 
+def check_throughput(prefix, outdir):
+    """Integrate u over the subglacial-channel cross-section (mid-channel) and compare the volume
+    flux to the prescribed discharge. Confirms the carved conduit actually delivers Q m³/s."""
+    tavg = os.path.join(outdir, f"{prefix}_timeavg.nc")
+    fields = os.path.join(outdir, f"{prefix}_fields.nc")
+    src = tavg if os.path.exists(tavg) else fields
+    if not os.path.exists(src): print("  (throughput: no 3-D file)"); return
+    ds = xr.open_dataset(src, decode_timedelta=False)
+    if "u" not in ds: print("  (throughput: no u field)"); ds.close(); return
+    W  = attr(ds, "channel_w_m", 24.0); H = attr(ds, "channel_h_m", 6.0)
+    Qt = attr(ds, "discharge_m3s", 150.0)
+    xf_a = attr(ds, "xf_a"); xf_b = attr(ds, "xf_b")
+    u = ds["u"]; u = u.isel(time=-1) if "time" in u.dims else u
+    u = u.squeeze()
+    xd, yd, zd = _ax(u, "x"), _ax(u, "y"), _ax(u, "z")
+    U = u.transpose(xd, yd, zd).values
+    x, y, z = _coord(ds, xd), _coord(ds, yd), _coord(ds, zd)
+    # sample plane at mid-channel (inside the conduit for every z<H, both vertical & overcut)
+    x_sample = 0.5 * xf_a
+    ix = int(np.argmin(np.abs(x - x_sample)))
+    ym = np.abs(y) < W/2; zm = (z >= 0) & (z < H)
+    dy, dz = _w(y), _w(z)
+    Uxs = U[ix][np.ix_(ym, zm)]                     # (ny_sel, nz_sel)
+    A = np.outer(dy[ym], dz[zm])
+    good = np.isfinite(Uxs)
+    Aeff = np.nansum(np.where(good, A, 0.0))
+    Qraw = float(np.nansum(np.where(good, Uxs * A, 0.0)))
+    umean = Qraw / Aeff if Aeff > 0 else float("nan")   # area-weighted mean u over the section
+    # normalize to the nominal W×H section so the y-edge half-cells (discretization) don't read
+    # as a false deficit; umean already reflects any real stagnation/recirculation in the conduit.
+    Q = umean * W * H
+    err = 100 * (Q - Qt) / Qt if Qt else float("nan")
+    flag = "OK" if abs(err) < 10 else "CHECK"
+    print(f"  channel throughput @ x={x[ix]:.1f} m (mid-channel, {W:.0f}×{H:.0f} m section): "
+          f"Q={Q:.1f} m³/s vs target {Qt:.0f}  [{err:+.0f}%, {flag}];  mean u={umean:.3f} m/s "
+          f"(U_in={Qt/(W*H):.3f})")
+    ds.close()
+    return Q, umean, Qt
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("prefix", nargs="?", default=None)
@@ -171,6 +210,7 @@ def main():
     print(f"Plotting run '{prefix}' from {a.dir}/")
     plot_slices(prefix, a.dir, a.time, xmax=(a.xmax or None))
     plot_profiles(prefix, a.dir)
+    check_throughput(prefix, a.dir)
 
 if __name__ == "__main__":
     main()

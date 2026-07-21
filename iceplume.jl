@@ -29,6 +29,7 @@
 using Oceananigans
 using Oceananigans.Units
 using Oceananigans.Solvers: ConjugateGradientPoissonSolver
+using Oceananigans.BoundaryConditions: OpenBoundaryCondition
 using NCDatasets            # required so NetCDFWriter (an extension) is available
 using Printf
 using Statistics: mean
@@ -44,6 +45,7 @@ function parse_cli()
         "dx_max" => 18.6, "stop_time" => 45.0, "output_interval" => 300.0,   # dz/fine_x/dx_max = Ovall 2025
         "checkpoint_interval" => 5.0, "wall_time_limit" => Inf,
         "cg_reltol" => 1e-5, "cg_maxiter" => 30.0,   # CG Poisson solver: looser reltol = fewer iters
+        "channel_len" => 10.0,   # minimum subglacial-channel length in x [m]; face shifts out if shorter
         "outdir" => "")   # output + checkpoints dir; empty ⇒ <rundir>/output
     provided = Set{String}()
     for a in ARGS
@@ -75,12 +77,18 @@ arch = cli["arch"] == "cpu" ? CPU() : cli["arch"] == "gpu" ? GPU() : (has_cuda_g
 tanβ = tand(β)
 x_wall = 3.0                               # thickness of the vertical ice slab [m] (a few cells)
 if β ≤ 0                                    # vertical: thin immersed wall (axis-aligned ⇒ no staircase)
-    xf_a, xf_b = x_wall, 0.0
+    xf_a0, xf_b = x_wall, 0.0
 elseif cli["terminus"] == "undercut"        # top overhangs toward the ocean
-    xf_a, xf_b = 0.0, tanβ
+    xf_a0, xf_b = 0.0, tanβ
 else                                        # overcut (default): base sticks out, recedes up
-    xf_a, xf_b = cli["Lz"] * tanβ, -tanβ
+    xf_a0, xf_b = cli["Lz"] * tanβ, -tanβ
 end
+# Shift the ice face out (in +x) so the subglacial channel is at least channel_len long at its
+# narrowest point over the channel height. This matters for the ~vertical face (slab only a few m
+# thick); the overcut base already extends tens of m, so the shift is a no-op there.
+min_face0 = xf_a0 + min(xf_b * cli["outlet_h"], 0.0)     # smallest x_face(z) for z ∈ [0, H]
+x_shift   = max(0.0, cli["channel_len"] - min_face0)
+xf_a      = xf_a0 + x_shift
 immersed_ice = true                         # always immerse the ice
 x_gl = xf_a                                 # grounding-line x-position (base of ice)
 #---
@@ -112,8 +120,13 @@ grid_base = RectilinearGrid(arch; size = (Nx, Ny, Nz),
                             topology = (Bounded, Bounded, Bounded))
 
 if immersed_ice
-    ice_mask = let a = xf_a, b = xf_b
-        (x, y, z) -> ifelse(x < a + b * z, 1, 0)   # 1 = solid ice, 0 = ocean
+    # Ice is solid where x < x_face(z), EXCEPT the subglacial channel: a W×H (= outlet cross-
+    # section) conduit extruded in x through the ice base, from the back wall out to the terminus
+    # face. Carving it to ocean (0) turns the nudged source region (|y|<W/2, z<H) into a real
+    # channel, so the discharge exits as a coherent, developed jet through an ice-face opening —
+    # instead of materializing in a 2 m sliver at the face and spraying off (the old behavior).
+    ice_mask = let a = xf_a, b = xf_b, Wc = cli["outlet_w"], Hc = cli["outlet_h"]
+        (x, y, z) -> ifelse((x < a + b * z) & !((abs(y) < Wc/2) & (z < Hc)), 1, 0)  # 1 ice, 0 ocean
     end
     grid = ImmersedBoundaryGrid(grid_base, GridFittedBoundary(ice_mask))
     @info "Immersed $(cli["terminus"]) ice face: x_face(z)=$(round(xf_a))$(xf_b<0 ? "" : "+")$(round(xf_b,digits=3))·z; grounding line x=$(round(x_gl)) m"
@@ -140,31 +153,26 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
 @inline S∞(z) = S_ambient(z)
 #---
 
-#+++ Discharge source + fjord-side sponge (interior relaxation forcing)
+#+++ Discharge tracers + fjord-side sponge (u volume flux is set by OPEN boundaries below)
 @inline x_face(z, p) = p.xf_a + p.xf_b * z
-# Fresh (T=0,S=0) jet of speed U_in in the fluid band just off the ice face, near the base.
+# The subglacial channel is carved OUT of the immersed ice (see ice_mask): a W×H conduit extruded
+# in x through the ice base. VOLUME is injected as a genuine inflow at the WEST boundary over the
+# channel opening (u_bcs, below) — a momentum nudge against the closed back wall could not push
+# net volume in. Here we only keep the channel water fresh/cold (T=0,S=0) so the inflow is buoyant.
 @inline in_outlet(x, y, z, p) = (x < x_face(z, p) + p.x_src) & (abs(y) < p.W/2) & (z < p.H)
-@inline src_u(x,y,z,t,u,p) = ifelse(in_outlet(x,y,z,p), -(u - p.U_in)/p.σ_src, zero(u))
 @inline src_T(x,y,z,t,T,p) = ifelse(in_outlet(x,y,z,p), -(T - 0.0)/p.σ_src, zero(T))
 @inline src_S(x,y,z,t,S,p) = ifelse(in_outlet(x,y,z,p), -(S - 0.0)/p.σ_src, zero(S))
 
-# Fjord (east) sponge: relax T,S→ambient and drive the compensating outflow (u→U_out above
-# 60 m depth, 0 below) so the discharged volume leaves the domain.
+# Fjord (east) tracer sponge: relax T,S→ambient near the outflow so exiting water is reasonable.
 @inline east_frac(x, p) = clamp((x - (p.Lx - p.L_sponge)) / p.L_sponge, 0.0, 1.0)
-@inline function spg_u(x,y,z,t,u,p)
-    target = ifelse(z > p.z_out, p.U_out, 0.0)
-    return -east_frac(x,p)/p.σ_spg * (u - target)
-end
 @inline spg_T(x,y,z,t,T,p) = -east_frac(x,p)/p.σ_spg * (T - T∞(z))
 @inline spg_S(x,y,z,t,S,p) = -east_frac(x,p)/p.σ_spg * (S - S∞(z))
 
-@inline f_u(x,y,z,t,u,p) = src_u(x,y,z,t,u,p) + spg_u(x,y,z,t,u,p)
 @inline f_T(x,y,z,t,T,p) = src_T(x,y,z,t,T,p) + spg_T(x,y,z,t,T,p)
 @inline f_S(x,y,z,t,S,p) = src_S(x,y,z,t,S,p) + spg_S(x,y,z,t,S,p)
-Fu = Forcing(f_u, field_dependencies = :u, parameters = params)
 FT = Forcing(f_T, field_dependencies = :T, parameters = params)
 FS = Forcing(f_S, field_dependencies = :S, parameters = params)
-forcing = (u = Fu, T = FT, S = FS)
+forcing = (T = FT, S = FS)
 #---
 
 # Quadratic drag on the ICE, always via the IMMERSED boundary (GPU-safe for all cases; a
@@ -178,7 +186,17 @@ bcpar = (; Cᴰ = params.Cᴰ)
 τv_bc = FluxBoundaryCondition(τv, field_dependencies=(:u,:v,:w), parameters=bcpar)
 τw_bc = FluxBoundaryCondition(τw, field_dependencies=(:u,:v,:w), parameters=bcpar)
 
-u_bcs = FieldBoundaryConditions(immersed = τu_bc)
+# Discharge VOLUME: a prescribed OPEN inflow at the west boundary over the channel opening
+# (u=U_in ⇒ Q = U_in·W·H), balanced EXACTLY by a prescribed outflow at the east boundary above
+# 60 m depth (u=U_out over Ly×60 ⇒ same Q — the paper's downstream BC). This is what delivers the
+# 150 m³/s; net boundary flux is zero by construction so the CG Poisson solve stays well-posed.
+# Functions are pure arithmetic (GPU-safe).
+@inline u_west_in(y,z,t,p)  = ifelse((abs(y) < p.W/2) & (z < p.H), p.U_in, zero(p.U_in))
+@inline u_east_out(y,z,t,p) = ifelse(z > p.z_out, p.U_out, zero(p.U_out))
+
+u_bcs = FieldBoundaryConditions(immersed = τu_bc,
+                                west = OpenBoundaryCondition(u_west_in,  parameters = params),
+                                east = OpenBoundaryCondition(u_east_out, parameters = params))
 v_bcs = FieldBoundaryConditions(immersed = τv_bc)
 w_bcs = FieldBoundaryConditions(immersed = τw_bc)
 T_bcs = FieldBoundaryConditions(top = FluxBoundaryCondition(0))
@@ -248,7 +266,9 @@ face_x = x_faces[face_ix]
 gattrs = Dict("terminus" => cli["terminus"], "face_angle_deg" => cli["face_angle"],
               "geometry" => "immersed_vertical_gravity", "theta_tilt_deg" => 0.0,
               "xf_a" => xf_a, "xf_b" => xf_b, "water_depth_m" => Lz,
-              "face_x_m" => face_x, "discharge_m3s" => cli["discharge"])
+              "face_x_m" => face_x, "discharge_m3s" => cli["discharge"],
+              "channel_w_m" => cli["outlet_w"], "channel_h_m" => cli["outlet_h"],
+              "channel_len_m" => cli["channel_len"])
 
 simulation.output_writers[:fields] = NetCDFWriter(model, outputs;
     filename = joinpath(outdir, "$(prefix)_fields.nc"),
