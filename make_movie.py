@@ -102,16 +102,22 @@ def main():
         return meshes
 
     ani = manim.FuncAnimation(fig, update, frames=nt, blit=False)
-    out = a.out or os.path.join(a.dir, f"{a.prefix}_{a.slice}.mp4")
-    try:
-        ani.save(out, writer=manim.FFMpegWriter(fps=a.fps, bitrate=3000))
-    except Exception as e:
-        out = os.path.splitext(out)[0] + ".gif"
-        print(f"  (ffmpeg unavailable [{e}] — writing gif instead)")
-        ani.save(out, writer=manim.PillowWriter(fps=a.fps))
-    plt.close(fig)
-    print(f"  wrote {out}  ({nt} frames)")
-    ds.close()
+    base = a.out and os.path.splitext(a.out)[0] or os.path.join(a.dir, f"{a.prefix}_{a.slice}")
+    if manim.FFMpegWriter.isAvailable():
+        # H.264 + yuv420p + even pixel dims = plays in QuickTime/Preview/browsers
+        out = base + ".mp4"
+        w = manim.FFMpegWriter(fps=a.fps, codec="libx264",
+                               extra_args=["-pix_fmt", "yuv420p",
+                                           "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
+        ani.save(out, writer=w, dpi=120)
+    else:
+        out = base + ".gif"
+        print("  (ffmpeg not found — writing a .gif instead; bring THIS file back)")
+        ani.save(out, writer=manim.PillowWriter(fps=a.fps), dpi=90)
+    plt.close(fig); ds.close()
+    sz = os.path.getsize(out) / 1e6
+    print(f"  wrote {out}  ({nt} frames, {sz:.1f} MB)")
+    if sz < 0.01: print("  WARNING: output is tiny — the writer likely failed; check ffmpeg/Pillow.")
 
 if __name__ == "__main__":
     main()
