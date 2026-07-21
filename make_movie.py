@@ -46,31 +46,32 @@ def main():
     ap.add_argument("--dir", default="output")
     ap.add_argument("--slice", default="midy", choices=["midy", "face"])
     ap.add_argument("--fps", type=int, default=10)
+    ap.add_argument("--xmax", type=float, default=400.0, help="near-field x-limit [m] for midy (0=full)")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
     fn = os.path.join(a.dir, f"{a.prefix}_{a.slice}.nc")
     if not os.path.exists(fn): sys.exit(f"not found: {fn}")
-    ds = xr.open_dataset(fn)
+    ds = xr.open_dataset(fn, decode_timedelta=False)
     horiz = "x" if a.slice == "midy" else "y"
     xlab = "distance from ice base (m)" if a.slice == "midy" else "along-glacier y (m)"
     xf_a, xf_b, face_x = attr(ds, "xf_a"), attr(ds, "xf_b"), attr(ds, "face_x_m", 0.0)
 
-    series, H, Z = {}, None, None
+    # Load + ice-mask EACH variable with ITS OWN coords (w is on z-faces, T/S on z-centers, so
+    # they differ by one point in z — a single shared mask would mis-broadcast).
+    series, coords = {}, {}
     for v in ("w", "T", "S"):
-        if v in ds:
-            series[v], H, Z = load_series(ds, v, horiz)
+        if v not in ds: continue
+        arr, Hv, Zv = load_series(ds, v, horiz)
+        if a.slice == "midy":
+            icev = Hv[None, :] < (xf_a + xf_b * Zv[:, None])
+        else:
+            icev = np.broadcast_to((face_x < (xf_a + xf_b * Zv))[:, None], (Zv.size, Hv.size))
+        series[v] = np.where(icev[None] | ~np.isfinite(arr), np.nan, arr)
+        coords[v] = (Hv, Zv)
     if not series: sys.exit("no w/T/S in file")
     nt = next(iter(series.values())).shape[0]
     times = _coord(ds, "time")[:nt] if "time" in ds.variables else np.arange(nt)
-
-    # immersed-ice mask (same every frame): solid where x < x_face(z)
-    if a.slice == "midy":
-        ice = H[None, :] < (xf_a + xf_b * Z[:, None])
-    else:
-        ice = np.broadcast_to((face_x < (xf_a + xf_b * Z))[:, None], (Z.size, H.size))
-    for v in series:
-        series[v] = np.where(ice[None] | ~np.isfinite(series[v]), np.nan, series[v])
 
     # fixed color scales over the whole series (robust percentiles)
     rng = {}
@@ -85,10 +86,11 @@ def main():
     axs = axs[0]
     meshes = []
     for ax, v in zip(axs, vars_present):
-        lo, hi, cmap = rng[v]
-        pc = ax.pcolormesh(H, Z, series[v][0], cmap=cmap, vmin=lo, vmax=hi, shading="auto")
+        Hv, Zv = coords[v]; lo, hi, cmap = rng[v]
+        pc = ax.pcolormesh(Hv, Zv, series[v][0], cmap=cmap, vmin=lo, vmax=hi, shading="auto")
         fig.colorbar(pc, ax=ax, label={"w": "w (m/s)", "T": "T (°C)", "S": "S (g/kg)"}[v])
         ax.set_xlabel(xlab); ax.set_ylabel("height above grounding line (m)"); ax.set_title(v)
+        if a.slice == "midy" and a.xmax: ax.set_xlim(0, a.xmax)   # near-field zoom
         meshes.append(pc)
     title = fig.suptitle("")
     fig.tight_layout(rect=[0, 0, 1, 0.96])       # leave room for the suptitle; de-crowd panels

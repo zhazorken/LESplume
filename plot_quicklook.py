@@ -42,7 +42,7 @@ def _load2d(ds, v, tidx, horiz):
     if hd is None or zd is None: return None
     return da.transpose(zd, hd).values, _coord(ds, hd), _coord(ds, zd)
 
-def plot_slices(prefix, outdir, tidx):
+def plot_slices(prefix, outdir, tidx, xmax=None):
     fig, axs = plt.subplots(2, 3, figsize=(15, 8))
     rows = [("midy", "x", "distance from ice base (m)"),
             ("face", "y", "along-glacier y (m)")]
@@ -51,7 +51,7 @@ def plot_slices(prefix, outdir, tidx):
         if not os.path.exists(fn):
             for c in range(3): axs[r, c].set_visible(False)
             print(f"  (skip {tag}: {fn} not found)"); continue
-        ds = xr.open_dataset(fn)
+        ds = xr.open_dataset(fn, decode_timedelta=False)
         xf_a, xf_b = attr(ds, "xf_a"), attr(ds, "xf_b")
         face_x = attr(ds, "face_x_m", 0.0)
         for c, (v, cmap) in enumerate([("w", "RdBu_r"), ("T", "inferno"), ("S", "viridis")]):
@@ -74,6 +74,7 @@ def plot_slices(prefix, outdir, tidx):
             fig.colorbar(pc, ax=ax, label={"w":"w (m/s)","T":"T (°C)","S":"S (g/kg)"}[v])
             ax.set_xlabel(xlab); ax.set_ylabel("height above grounding line (m)")
             ax.set_title(f"{tag}: {v}")
+            if tag == "midy" and xmax: ax.set_xlim(0, xmax)   # near-field zoom
         ds.close()
     fig.suptitle(f"{prefix} — snapshot slices (time index {tidx})  [true x-z, immersed ice]")
     fig.tight_layout()
@@ -85,10 +86,10 @@ def plot_profiles(prefix, outdir):
     fields = os.path.join(outdir, f"{prefix}_fields.nc")
     ds = None
     if os.path.exists(tavg):
-        d = xr.open_dataset(tavg)
+        d = xr.open_dataset(tavg, decode_timedelta=False)
         if "w" in d and d["w"].size > 0 and float(np.abs(d["w"]).max()) > 1e-6: ds = d
         else: d.close(); print("  (timeavg empty — using instantaneous fields)")
-    if ds is None and os.path.exists(fields): ds = xr.open_dataset(fields)
+    if ds is None and os.path.exists(fields): ds = xr.open_dataset(fields, decode_timedelta=False)
     if ds is None: print("  (skip profiles: no output)"); return
     if "time" in ds.coords or "time" in ds.variables:
         tval = float(np.ravel(ds["time"].values)[-1])
@@ -114,16 +115,25 @@ def plot_profiles(prefix, outdir):
     Wm = np.where(solid, np.nan, W); Tm = np.where(solid, np.nan, Tv); Sm = np.where(solid, np.nan, Sv)
 
     A = np.broadcast_to(area[:, :, None], W.shape)
-    up = np.where(np.nan_to_num(Wm) > 0, np.nan_to_num(Wm), 0.0)
+    far = slice(int(nx * 0.66), None)
     with np.errstate(invalid="ignore", divide="ignore"):
-        Q = np.nansum(A * up, axis=(0, 1))
+        Tamb = np.nanmean(Tm[far], axis=(0, 1)); Samb = np.nanmean(Sm[far], axis=(0, 1))
+        # robust per-level ambient S (saltiest ~90th pct = unmixed water); PLUME = fresher by dS.
+        # Integrating flux only over plume cells stops ambient turbulence from inflating Q (the
+        # surfaced vertical plume otherwise makes the whole-domain flux meaningless).
+        Sref = np.nanpercentile(np.where(np.isfinite(Sm), Sm, np.nan), 90, axis=(0, 1))
+    dS = 0.1                                   # g/kg freshness threshold defining "plume water"
+    plume = np.isfinite(Wm) & (Sm < (Sref[None, None, :] - dS))
+    Wp = np.where(plume, np.nan_to_num(Wm), 0.0)
+    up = np.where(Wp > 0, Wp, 0.0)             # upward-moving plume water only
+    Ap = np.where(plume, A, 0.0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        Q = np.nansum(A * up, axis=(0, 1))                                      # plume volume flux
         Tbar = np.nansum(A * up * np.nan_to_num(Tm), axis=(0, 1)) / np.where(Q > 0, Q, np.nan)
         Sbar = np.nansum(A * up * np.nan_to_num(Sm), axis=(0, 1)) / np.where(Q > 0, Q, np.nan)
-        validA = np.where(np.isfinite(Wm), A, 0.0)
-        wmean = np.nansum(validA * np.nan_to_num(Wm), axis=(0, 1)) / np.where(validA.sum((0,1))>0, validA.sum((0,1)), np.nan)
-        wmax = np.nanmax(np.where(np.isfinite(Wm), Wm, -np.inf), axis=(0, 1)); wmax[~np.isfinite(wmax)] = np.nan
-        far = slice(int(nx * 0.66), None)
-        Tamb = np.nanmean(Tm[far], axis=(0, 1)); Samb = np.nanmean(Sm[far], axis=(0, 1))
+        Apz = Ap.sum((0, 1))
+        wmean = np.nansum(Ap * Wp, axis=(0, 1)) / np.where(Apz > 0, Apz, np.nan)  # plume-mean w
+        wmax = np.nanmax(np.where(plume, Wm, -np.inf), axis=(0, 1)); wmax[~np.isfinite(wmax)] = np.nan
 
     rho_p = RHO0 * (1 - ALPHA * Tbar + BETA * Sbar)
     rho_a = RHO0 * (1 - ALPHA * Tamb + BETA * Samb)
@@ -132,10 +142,10 @@ def plot_profiles(prefix, outdir):
     if idx.size: nb = z[idx[0] + 1]
 
     fig, ax = plt.subplots(1, 4, figsize=(17, 6), sharey=True)
-    ax[0].plot(Q, z); ax[0].set_xlabel("upward volume flux Q(z) [m³/s]"); ax[0].set_ylabel("height above grounding line (m)")
-    ax[1].plot(Tbar, z, label="flux-weighted"); ax[1].plot(Tamb, z, "--", c="gray", label="ambient"); ax[1].set_xlabel("T (°C)"); ax[1].legend()
-    ax[2].plot(Sbar, z, label="flux-weighted"); ax[2].plot(Samb, z, "--", c="gray", label="ambient"); ax[2].set_xlabel("S (g/kg)"); ax[2].legend()
-    ax[3].plot(wmean, z, label="horiz. mean w"); ax[3].plot(wmax, z, label="max w"); ax[3].set_xlabel("w (m/s)"); ax[3].legend()
+    ax[0].plot(Q, z); ax[0].set_xlabel("plume volume flux Q(z) [m³/s]"); ax[0].set_ylabel("height above grounding line (m)")
+    ax[1].plot(Tbar, z, label="plume (flux-wtd)"); ax[1].plot(Tamb, z, "--", c="gray", label="ambient"); ax[1].set_xlabel("T (°C)"); ax[1].legend()
+    ax[2].plot(Sbar, z, label="plume (flux-wtd)"); ax[2].plot(Samb, z, "--", c="gray", label="ambient"); ax[2].set_xlabel("S (g/kg)"); ax[2].legend()
+    ax[3].plot(wmean, z, label="plume-mean w"); ax[3].plot(wmax, z, label="max w (plume)"); ax[3].set_xlabel("w (m/s)"); ax[3].legend()
     for a in ax:
         a.grid(alpha=0.3)
         if nb is not None: a.axhline(nb, ls=":", c="crimson")
@@ -149,6 +159,8 @@ def main():
     ap.add_argument("prefix", nargs="?", default=None)
     ap.add_argument("--dir", default="output")
     ap.add_argument("--time", type=int, default=-1)
+    ap.add_argument("--xmax", type=float, default=400.0,
+                    help="near-field x-limit [m] for the midy panels (0/None = full domain)")
     a = ap.parse_args()
     prefix = a.prefix
     if prefix is None:
@@ -157,7 +169,7 @@ def main():
         prefix = os.path.basename(cands[0]).rsplit("_", 1)[0]
     os.makedirs(a.dir, exist_ok=True)
     print(f"Plotting run '{prefix}' from {a.dir}/")
-    plot_slices(prefix, a.dir, a.time)
+    plot_slices(prefix, a.dir, a.time, xmax=(a.xmax or None))
     plot_profiles(prefix, a.dir)
 
 if __name__ == "__main__":
