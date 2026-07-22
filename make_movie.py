@@ -56,6 +56,7 @@ def main():
     horiz = "x" if a.slice == "midy" else "y"
     xlab = "distance from ice base (m)" if a.slice == "midy" else "along-glacier y (m)"
     xf_a, xf_b, face_x = attr(ds, "xf_a"), attr(ds, "xf_b"), attr(ds, "face_x_m", 0.0)
+    Hc = attr(ds, "channel_h_m", 0.0)   # keep the carved subglacial channel (z<Hc) visible
 
     # Load + ice-mask EACH variable with ITS OWN coords (w is on z-faces, T/S on z-centers, so
     # they differ by one point in z — a single shared mask would mis-broadcast).
@@ -64,9 +65,9 @@ def main():
         if v not in ds: continue
         arr, Hv, Zv = load_series(ds, v, horiz)
         if a.slice == "midy":
-            icev = Hv[None, :] < (xf_a + xf_b * Zv[:, None])
+            icev = (Hv[None, :] < (xf_a + xf_b * Zv[:, None])) & ~(Zv[:, None] < Hc)
         else:
-            icev = np.broadcast_to((face_x < (xf_a + xf_b * Zv))[:, None], (Zv.size, Hv.size))
+            icev = np.broadcast_to(((face_x < (xf_a + xf_b * Zv)) & ~(Zv < Hc))[:, None], (Zv.size, Hv.size))
         series[v] = np.where(icev[None] | ~np.isfinite(arr), np.nan, arr)
         coords[v] = (Hv, Zv)
     if not series: sys.exit("no w/T/S in file")

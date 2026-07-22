@@ -3,7 +3,7 @@
 #PBS -N iceplume_cg
 #PBS -o logs/iceplume_cg.log
 #PBS -j oe
-#PBS -l walltime=11:59:00
+#PBS -l walltime=05:00:00
 #PBS -q casper
 #PBS -l select=1:ncpus=4:mem=60gb:ngpus=1:gpu_type=a100
 #PBS -M kenzhao@unc.edu
@@ -23,12 +23,12 @@ mkdir -p logs
 #     qsub -v CASE=vertical submit_pbs.sh
 #     qsub -v CASE=overcut  submit_pbs.sh     (default)
 #
-# GPU-ONLY domain (the CPU-test defaults in iceplume.jl are left small on purpose):
-#   743 m wide × 4 km long, 0.75 m in the 375 m nearest the terminus, then the along-fjord
-#   grid stretches to 18.6 m out to 4 km. ~153 M cells — plan on an 80 GB A100 (a 40 GB card
-#   will be tight). Each 3-D snapshot is ~7 GB, so 3-D output is written sparingly (15 min);
-#   the 2-D face/mid-y slices and the 15-min time-average carry the detail.
-#   If it's too heavy: drop to --Ly=384 (~79 M cells).
+# GPU-ONLY domain, now stretched in x, y AND z (the CPU-test defaults in iceplume.jl stay small):
+#   743 m wide × 4 km long × 150 m deep. 0.75 m fine near the terminus/plume; y is 0.75 m only in
+#   the middle 200 m (|y|<100) then stretches to 8 m toward the walls; z is 0.75 m to 120 m then
+#   coarsens toward the surface (relaxes the surface-impingement CFL). ~63 M cells (was ~153 M
+#   uniform) → ~2.4× fewer cells + a larger Δt. 3-D output is sparse (15 min); the 2-D slices and
+#   the 15-min average carry the detail.  Restartable: checkpoints, auto-resumes on resubmit.
 
 # No HPC modules are required: CUDA.jl bundles its own CUDA toolkit and uses the GPU node's
 # driver (libcuda). If CUDA.jl ever can't find the driver, `module load cuda` (first check the
@@ -44,7 +44,9 @@ JULIA="${JULIA:-julia}"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES ; Julia: $($JULIA --version 2>/dev/null)"
 
 CASE=${CASE:-overcut}
-DOMAIN="--Ly=743 --Lx=4000 --fine_x=375 --dz=0.75 --dx_max=18.6"     # GPU-only domain
+# stretched GPU domain: fine (0.75 m) near terminus; y fine in middle 200 m → 8 m at walls; z fine
+# to 120 m → coarser to the surface.
+DOMAIN="--Ly=743 --Lx=4000 --fine_x=375 --dz=0.75 --dx_max=18.6 --fine_y=100 --dy_max=8 --fine_z=120 --dz_surf=4"
 # Outputs + checkpoints go here (a new folder on /glade/work, OFF the git repo). Override with
 # `qsub -v CASE=overcut,OUTDIR=/glade/derecho/scratch/$USER/LESplume submit_pbs.sh` for scratch.
 OUTDIR="${OUTDIR:-/glade/work/$USER/LESplume_runs}"
@@ -55,11 +57,15 @@ else
     ARGS="--simname=cg_overcut634 --terminus=overcut --face_angle=63.4"   # 2:1 headline overcut
 fi
 
-# Discharge 150 m3/s, 24x6 m point-plume outlet, grounding line 150 m (2024 conditions);
-# 45 min run, 15-min time-average. Auto-resumes from a checkpoint if the job is re-submitted.
+# Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 10 m tall — a
+# deliberate deviation from the paper's 24×6 (NOT a paper reproduction): the taller outlet drops
+# U_in from 1.04 to 0.625 m/s, shortening the jet length L_M ~7.5→5.1 m so the plume detaches less.
+# stop_time=45 min is the MODEL target; this 5 h wall job does one leg and CHECKPOINTS at 4.8 h
+# (--wall_time_limit=4.8, inside the 5 h PBS walltime so the final checkpoint has time to write).
+# Re-submit the SAME command to auto-resume from the checkpoint until it reaches 45 min.
 time $JULIA --project --pkgimages=no iceplume.jl \
-    $ARGS $DOMAIN --discharge=150 --outlet_w=24 --outlet_h=6 --Lz=150 \
-    --stop_time=45 --output_interval=900 --wall_time_limit=11.5 --outdir="$OUTDIR" \
+    $ARGS $DOMAIN --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
+    --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=4.8 --outdir="$OUTDIR" \
     2>&1 | tee logs/${CASE}.out
 
 qstat -f $PBS_JOBID >> logs/iceplume_cg.log

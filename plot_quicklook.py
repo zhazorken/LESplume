@@ -54,16 +54,18 @@ def plot_slices(prefix, outdir, tidx, xmax=None):
         ds = xr.open_dataset(fn, decode_timedelta=False)
         xf_a, xf_b = attr(ds, "xf_a"), attr(ds, "xf_b")
         face_x = attr(ds, "face_x_m", 0.0)
+        Hc = attr(ds, "channel_h_m", 0.0)   # carved subglacial channel: ocean where z < Hc
         for c, (v, cmap) in enumerate([("w", "RdBu_r"), ("T", "inferno"), ("S", "viridis")]):
             ax = axs[r, c]
             got = _load2d(ds, v, tidx, horiz)
             if got is None: ax.set_visible(False); continue
             data, H, Z = got
-            # blank the immersed ice (x < x_face(z)); face slice is at fixed x=face_x
+            # blank the immersed ice (x < x_face(z)) but KEEP the carved channel (z < Hc) visible —
+            # otherwise the subglacial conduit (and its runway flow) gets painted over as "ice".
             if tag == "midy":
-                ice = H[None, :] < (xf_a + xf_b * Z[:, None])
+                ice = (H[None, :] < (xf_a + xf_b * Z[:, None])) & ~(Z[:, None] < Hc)
             else:
-                ice = np.broadcast_to((face_x < (xf_a + xf_b * Z))[:, None], data.shape)
+                ice = np.broadcast_to(((face_x < (xf_a + xf_b * Z)) & ~(Z < Hc))[:, None], data.shape)
             data = np.where(ice | ~np.isfinite(data), np.nan, data)
             if v == "w":
                 m = np.nanpercentile(np.abs(data), 99) or 1e-6

@@ -43,9 +43,12 @@ function parse_cli()
         "face_angle" => 90.0, "discharge" => 150.0, "outlet_w" => 24.0, "outlet_h" => 6.0,
         "Lz" => 150.0, "Ly" => 192.0, "Lx" => 500.0, "dz" => 0.75, "fine_x" => 375.0,
         "dx_max" => 18.6, "stop_time" => 45.0, "output_interval" => 300.0,   # dz/fine_x/dx_max = Ovall 2025
+        "fine_y" => 100.0, "dy_max" => 8.0,   # y: uniform dz within |y|<fine_y (middle 2·fine_y), then stretch to dy_max
+        "fine_z" => 120.0, "dz_surf" => 4.0,  # z: uniform dz to fine_z, then stretch to dz_surf toward the surface
         "checkpoint_interval" => 5.0, "wall_time_limit" => Inf,
         "cg_reltol" => 1e-5, "cg_maxiter" => 30.0,   # CG Poisson solver: looser reltol = fewer iters
         "channel_len" => 10.0,   # minimum subglacial-channel length in x [m]; face shifts out if shorter
+        "sig_src" => 2.0,        # discharge-source relaxation time [s]; larger = gentler (tune vs Δt)
         "outdir" => "")   # output + checkpoints dir; empty ⇒ <rundir>/output
     provided = Set{String}()
     for a in ARGS
@@ -93,30 +96,40 @@ immersed_ice = true                         # always immerse the ice
 x_gl = xf_a                                 # grounding-line x-position (base of ice)
 #---
 
-#+++ Grid (x fine to fine_x then stretched; y,z uniform; vertical gravity so z = true height)
-function build_x_faces(dx_fine, fine_x, dx_max, Lx; growth = 1.03)
+#+++ Grid — fine near the terminus/plume, stretched away in x, y AND z (vertical gravity ⇒ z = height)
+# one-sided stretch 0→L: uniform dx_fine out to `fine`, then geometric growth capped at d_max.
+function build_faces(dx_fine, fine, d_max, L; growth = 1.03)
     f = Float64[0.0]
-    while f[end] < min(fine_x, Lx); push!(f, f[end] + dx_fine); end
-    dx = dx_fine
-    while f[end] < Lx; dx = min(dx * growth, dx_max); push!(f, f[end] + dx); end
-    f[end] = Lx; return f
+    while f[end] < min(fine, L); push!(f, f[end] + dx_fine); end
+    d = dx_fine
+    while f[end] < L; d = min(d * growth, d_max); push!(f, f[end] + d); end
+    f[end] = L; return f
+end
+# symmetric stretch on [-L/2,+L/2]: uniform within |y|<half_fine, stretch to d_max toward both edges.
+function build_sym_faces(dx_fine, half_fine, d_max, L; growth = 1.03)
+    pos = build_faces(dx_fine, half_fine, d_max, L/2; growth = growth)   # 0 .. L/2
+    return vcat(-reverse(pos[2:end]), pos)                               # -L/2 .. 0 .. +L/2
 end
 
 Lz = cli["Lz"]; Ly = cli["Ly"]; Lx = cli["Lx"]
 dx_fine = cli["dz"]; fine_x = cli["fine_x"]; dx_max = cli["dx_max"]
+fine_y = cli["fine_y"]; dy_max = cli["dy_max"]; fine_z = cli["fine_z"]; dz_surf = cli["dz_surf"]
 if arch == CPU() && !("dz" in provided)     # laptop smoke test: coarse but ice-resolving
     @warn "CPU with no --dz: reduced smoke-test resolution (2 m; not for science)."
-    Lx = min(Lx, 220.0); Ly = min(Ly, 100.0); dx_fine = 2.0; fine_x = 80.0; dx_max = 12.0
+    Lx = min(Lx, 220.0); Ly = min(Ly, 120.0); dx_fine = 2.0; fine_x = 80.0; dx_max = 12.0
+    fine_y = 40.0; dy_max = 8.0; fine_z = 90.0; dz_surf = 6.0
 elseif arch == CPU()
     @warn "CPU at user resolution dz=$dx_fine on Lx=$Lx, Ly=$Ly — intermediate/overnight run."
 end
-x_faces = build_x_faces(dx_fine, fine_x, dx_max, Lx)
-Nx = length(x_faces) - 1
-Ny = max(round(Int, Ly / dx_fine), 4)
-Nz = max(round(Int, Lz / dx_fine), 4)
+# x: fine to fine_x then stretch to dx_max (as Ovall 2025).  y: fine middle 2·fine_y, stretch to dy_max.
+# z: fine to fine_z, stretch to dz_surf near the surface (relaxes the surface-impingement CFL).
+x_faces = build_faces(dx_fine, fine_x, dx_max, Lx)
+y_faces = build_sym_faces(dx_fine, fine_y, dy_max, Ly)
+z_faces = build_faces(dx_fine, fine_z, dz_surf, Lz)
+Nx = length(x_faces) - 1; Ny = length(y_faces) - 1; Nz = length(z_faces) - 1
 
 grid_base = RectilinearGrid(arch; size = (Nx, Ny, Nz),
-                            x = x_faces, y = (-Ly/2, +Ly/2), z = (0, Lz),
+                            x = x_faces, y = y_faces, z = z_faces,
                             topology = (Bounded, Bounded, Bounded))
 
 if immersed_ice
@@ -138,14 +151,21 @@ end
 #---
 
 #+++ Parameters
-U_in  = cli["discharge"] / (cli["outlet_w"] * cli["outlet_h"])
-U_out = cli["discharge"] / (Ly * 60.0)
+U_in = cli["discharge"] / (cli["outlet_w"] * cli["outlet_h"])   # channel inflow speed [m/s]
+# SMOOTH east-outflow profile g(z)=½(1+tanh((z−z_out)/δ_out)): outflow concentrated above 60 m depth
+# but WITHOUT the hard jump (the discontinuity stalls the CG preconditioner). Peak amplitude is
+# normalized so the discrete flux ∫∫ u_out dy dz = Q exactly (mass balance ⇒ CG stays well-posed).
+z_out = Lz - 60.0; δ_out = 15.0
+zC = 0.5 .* (z_faces[1:end-1] .+ z_faces[2:end]); Δzc = diff(z_faces)
+I_s = sum(0.5 .* (1 .+ tanh.((zC .- z_out) ./ δ_out)) .* Δzc)      # ∫ g(z) dz  [m]
+U_out_peak = cli["discharge"] / (Ly * I_s)                        # Ly · ∫g · U_peak = Q
 params = (; Lz, Lx, Ly, xf_a, xf_b,
-          W = cli["outlet_w"], H = cli["outlet_h"], U_in, U_out,
-          σ_src = 2.0, σ_spg = 10.0, x_src = 3 * dx_fine,
-          L_sponge = 60.0, z_out = Lz - 60.0,
+          W = cli["outlet_w"], H = cli["outlet_h"], U_in,
+          U_out_peak, z_out, δ_out,
+          σ_src = cli["sig_src"], σ_spg = 10.0, x_src = 3 * dx_fine,
+          L_sponge = 60.0,
           Cᴰ = 2.5e-3)
-@info "Derived" U_in U_out x_gl
+@info "Derived" U_in U_out_peak I_s x_gl
 #---
 
 #+++ Ambient (vertical gravity ⇒ z is true height; no rotation)
@@ -153,12 +173,12 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
 @inline S∞(z) = S_ambient(z)
 #---
 
-#+++ Discharge tracers + fjord-side sponge (u volume flux is set by OPEN boundaries below)
+#+++ Discharge freshwater source + fjord-side tracer sponge. The u VOLUME (and the one-way
+#    subglacial-channel RUNWAY) is set by the OPEN boundaries below — a momentum nudge against the
+#    closed back wall cannot drive net through-flow, so open boundaries are required for the runway.
 @inline x_face(z, p) = p.xf_a + p.xf_b * z
-# The subglacial channel is carved OUT of the immersed ice (see ice_mask): a W×H conduit extruded
-# in x through the ice base. VOLUME is injected as a genuine inflow at the WEST boundary over the
-# channel opening (u_bcs, below) — a momentum nudge against the closed back wall could not push
-# net volume in. Here we only keep the channel water fresh/cold (T=0,S=0) so the inflow is buoyant.
+# Keep the carved channel fresh/cold (T=0,S=0) so the west inflow is buoyant. The along-channel jet
+# comes from the west-inflow BC, not an interior u-nudge.
 @inline in_outlet(x, y, z, p) = (x < x_face(z, p) + p.x_src) & (abs(y) < p.W/2) & (z < p.H)
 @inline src_T(x,y,z,t,T,p) = ifelse(in_outlet(x,y,z,p), -(T - 0.0)/p.σ_src, zero(T))
 @inline src_S(x,y,z,t,S,p) = ifelse(in_outlet(x,y,z,p), -(S - 0.0)/p.σ_src, zero(S))
@@ -186,14 +206,12 @@ bcpar = (; Cᴰ = params.Cᴰ)
 τv_bc = FluxBoundaryCondition(τv, field_dependencies=(:u,:v,:w), parameters=bcpar)
 τw_bc = FluxBoundaryCondition(τw, field_dependencies=(:u,:v,:w), parameters=bcpar)
 
-# Discharge VOLUME: a prescribed OPEN inflow at the west boundary over the channel opening
-# (u=U_in ⇒ Q = U_in·W·H), balanced EXACTLY by a prescribed outflow at the east boundary above
-# 60 m depth (u=U_out over Ly×60 ⇒ same Q — the paper's downstream BC). This is what delivers the
-# 150 m³/s; net boundary flux is zero by construction so the CG Poisson solve stays well-posed.
-# Functions are pure arithmetic (GPU-safe).
+# Discharge VOLUME + runway via prescribed OPEN boundaries: west inflow over the channel opening
+# (u=U_in ⇒ Q = U_in·W·H drives the along-channel jet — the runway), balanced by a SMOOTH east
+# outflow g(z)=½(1+tanh((z−z_out)/δ_out)) scaled to U_out_peak so ∫∫ = Q. The smooth profile avoids
+# the hard 60 m-depth jump that stalls the CG preconditioner. Pure arithmetic ⇒ GPU-safe.
 @inline u_west_in(y,z,t,p)  = ifelse((abs(y) < p.W/2) & (z < p.H), p.U_in, zero(p.U_in))
-@inline u_east_out(y,z,t,p) = ifelse(z > p.z_out, p.U_out, zero(p.U_out))
-
+@inline u_east_out(y,z,t,p) = p.U_out_peak * 0.5*(1 + tanh((z - p.z_out)/p.δ_out))
 u_bcs = FieldBoundaryConditions(immersed = τu_bc,
                                 west = OpenBoundaryCondition(u_west_in,  parameters = params),
                                 east = OpenBoundaryCondition(u_east_out, parameters = params))
@@ -242,6 +260,17 @@ simulation.callbacks[:wizard] = Callback(TimeStepWizard(cfl=0.5, max_change=1.05
                                          IterationInterval(5))
 using Oceanostics.ProgressMessengers: BasicTimeMessenger
 simulation.callbacks[:progress] = Callback(BasicTimeMessenger(), IterationInterval(50))
+
+# Watch what sets the CFL: print max|u|,|v|,|w| (the surface-impingement velocities dominate Δt).
+using Oceananigans.Fields: interior
+@inline _vmax(f) = maximum(abs, interior(f))
+function log_vmax(sim)
+    u, v, w = sim.model.velocities
+    @info @sprintf("      max|u|=%.2f  max|v|=%.2f  max|w|=%.2f m/s   Δt=%.3f s",
+                   _vmax(u), _vmax(v), _vmax(w), sim.Δt)
+    return nothing
+end
+simulation.callbacks[:vmax] = Callback(log_vmax, IterationInterval(50))
 #---
 
 #+++ Outputs
