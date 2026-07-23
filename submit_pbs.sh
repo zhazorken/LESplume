@@ -64,7 +64,7 @@ fi
 # (--wall_time_limit=4.8, inside the 5 h PBS walltime so the final checkpoint has time to write).
 # Re-submit the SAME command to auto-resume from the checkpoint until it reaches 45 min.
 time $JULIA --project --pkgimages=no iceplume.jl \
-    $ARGS $DOMAIN --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
+    $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
     --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=4.8 --outdir="$OUTDIR" \
     2>&1 | tee logs/${CASE}.out
 
