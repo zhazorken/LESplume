@@ -3,7 +3,7 @@
 #PBS -N iceplume_cg
 #PBS -o logs/iceplume_cg.log
 #PBS -j oe
-#PBS -l walltime=05:00:00
+#PBS -l walltime=23:00:00
 #PBS -q casper
 #PBS -l select=1:ncpus=4:mem=60gb:ngpus=1:gpu_type=a100
 #PBS -M kenzhao@unc.edu
@@ -60,12 +60,14 @@ fi
 # Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 10 m tall — a
 # deliberate deviation from the paper's 24×6 (NOT a paper reproduction): the taller outlet drops
 # U_in from 1.04 to 0.625 m/s, shortening the jet length L_M ~7.5→5.1 m so the plume detaches less.
-# stop_time=45 min is the MODEL target; this 5 h wall job does one leg and CHECKPOINTS at 4.8 h
-# (--wall_time_limit=4.8, inside the 5 h PBS walltime so the final checkpoint has time to write).
-# Re-submit the SAME command to auto-resume from the checkpoint until it reaches 45 min.
-time $JULIA --project --pkgimages=no iceplume.jl \
+# stop_time=45 min is the MODEL target. 23 h PBS walltime: at ~12 wall-s per model-s the full
+# 45-min run finishes in ~9-10 h — ONE overnight leg. --wall_time_limit=22.8 checkpoints inside the
+# wall if it runs long; re-submit the SAME command to auto-resume. Checkpoints every 3 min = safety.
+# NOTE: do NOT add --pkgimages=no — it disables Julia's precompiled images and breaks CUDA.jl's
+# GPU detection (has_cuda_gpu()→false ⇒ "a CUDA GPU was not found"). Plain --project sees the A100.
+time $JULIA --project iceplume.jl \
     $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
-    --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=4.8 --outdir="$OUTDIR" \
+    --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
     2>&1 | tee logs/${CASE}.out
 
 qstat -f $PBS_JOBID >> logs/iceplume_cg.log
