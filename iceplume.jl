@@ -166,8 +166,20 @@ z_out = Lz - 60.0; δ_out = 15.0
 zC = 0.5 .* (z_faces[1:end-1] .+ z_faces[2:end]); Δzc = diff(z_faces)
 I_s = sum(0.5 .* (1 .+ tanh.((zC .- z_out) ./ δ_out)) .* Δzc)      # ∫ g(z) dz  [m]
 U_out_peak = cli["discharge"] / (Ly * I_s)                        # Ly · ∫g · U_peak = Q
+# TAPERED inflow: a smooth bump that →0 over δ_e at the outlet sides (|y|=W/2) and top (z=H), so the
+# inflow has NO top-hat discontinuity at the sharp ice edges of the carved opening (that jump seeded
+# the NaN). Peak U_in_peak is normalized so ∫∫ bump dy dz = W·H ⇒ same 150 m³/s discharge.
+Wc = cli["outlet_w"]; Hc = cli["outlet_h"]; δ_e = 2.0
+yC = 0.5 .* (y_faces[1:end-1] .+ y_faces[2:end]); Δyc = diff(y_faces)
+bump0(y,z) = clamp((Wc/2 - abs(y))/δ_e, 0.0, 1.0) * clamp((Hc - z)/δ_e, 0.0, 1.0)
+A_bump = 0.0
+for (k, zk) in enumerate(zC), (j, yj) in enumerate(yC)
+    (abs(yj) < Wc/2 && zk < Hc) || continue
+    global A_bump += bump0(yj, zk) * Δyc[j] * Δzc[k]
+end
+U_in_peak = cli["discharge"] / A_bump
 params = (; Lz, Lx, Ly, xf_a, xf_b,
-          W = cli["outlet_w"], H = cli["outlet_h"], U_in,
+          W = cli["outlet_w"], H = cli["outlet_h"], U_in, U_in_peak, δ_e,
           U_out_peak, z_out, δ_out,
           σ_src = cli["sig_src"], σ_spg = 10.0, x_src = 3 * dx_fine,
           L_sponge = 60.0, t_ramp = 60.0,
@@ -220,7 +232,9 @@ bcpar = (; Cᴰ = params.Cᴰ)
 # Ramp inflow AND outflow together from 0→full over t_ramp s (avoids the impulsive-start pressure
 # shock that NaN'd the short-channel vertical case; ramping both keeps the net boundary flux ≈0).
 @inline _ramp(t,p) = min(t / p.t_ramp, 1.0)
-@inline u_west_in(y,z,t,p)  = ifelse((abs(y) < p.W/2) & (z < p.H), p.U_in * _ramp(t,p), zero(p.U_in))
+# smooth bump: 1 in the interior, linearly →0 over δ_e at the sides (|y|→W/2) and top (z→H)
+@inline _bump(y,z,p) = clamp((p.W/2 - abs(y))/p.δ_e, 0.0, 1.0) * clamp((p.H - z)/p.δ_e, 0.0, 1.0)
+@inline u_west_in(y,z,t,p)  = ifelse((abs(y) < p.W/2) & (z < p.H), p.U_in_peak * _bump(y,z,p) * _ramp(t,p), zero(p.U_in_peak))
 @inline u_east_out(y,z,t,p) = p.U_out_peak * 0.5*(1 + tanh((z - p.z_out)/p.δ_out)) * _ramp(t,p)
 u_bcs = FieldBoundaryConditions(immersed = τu_bc,
                                 west = OpenBoundaryCondition(u_west_in,  parameters = params),
