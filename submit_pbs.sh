@@ -46,7 +46,9 @@ echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES ; Julia: $($JULIA --version 2>/
 CASE=${CASE:-overcut}
 # stretched GPU domain: fine (0.75 m) near terminus; y fine in middle 200 m → 8 m at walls; z fine
 # to 120 m → coarser to the surface.
-DOMAIN="--Ly=743 --Lx=4000 --fine_x=375 --dz=0.75 --dx_max=18.6 --fine_y=100 --dy_max=8 --fine_z=120 --dz_surf=4"
+# z kept UNIFORM (fine_z=Lz) for stability — the surface z-stretch left a sliver cell where the
+# plume hits the lid and blew the run up. y stretched but with a wide (300 m) fine core.
+DOMAIN="--Ly=743 --Lx=4000 --fine_x=375 --dz=0.75 --dx_max=18.6 --fine_y=150 --dy_max=8 --fine_z=150 --dz_surf=4"
 # Outputs + checkpoints go here (a new folder on /glade/work, OFF the git repo). Override with
 # `qsub -v CASE=overcut,OUTDIR=/glade/derecho/scratch/$USER/LESplume submit_pbs.sh` for scratch.
 OUTDIR="${OUTDIR:-/glade/work/$USER/LESplume_runs}"

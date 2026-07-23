@@ -103,7 +103,13 @@ function build_faces(dx_fine, fine, d_max, L; growth = 1.03)
     while f[end] < min(fine, L); push!(f, f[end] + dx_fine); end
     d = dx_fine
     while f[end] < L; d = min(d * growth, d_max); push!(f, f[end] + d); end
-    f[end] = L; return f
+    f[end] = L
+    # Clipping to L can leave a sliver last cell; a tiny cell next to fast flow (e.g. the surface
+    # plume-impingement, or the open outflow) is a stability hazard — merge it into its neighbor.
+    if length(f) > 2 && (f[end] - f[end-1]) < 0.5 * dx_fine
+        deleteat!(f, length(f) - 1)
+    end
+    return f
 end
 # symmetric stretch on [-L/2,+L/2]: uniform within |y|<half_fine, stretch to d_max toward both edges.
 function build_sym_faces(dx_fine, half_fine, d_max, L; growth = 1.03)
@@ -256,7 +262,7 @@ set!(model, u = uᵢ, v = vᵢ, w = wᵢ, T = Tᵢ, S = Sᵢ)
 wtl = cli["wall_time_limit"]
 simulation = Simulation(model; Δt = Δt₀, stop_time = cli["stop_time"] * minutes,
                         wall_time_limit = isfinite(wtl) ? wtl * 3600 : Inf)
-simulation.callbacks[:wizard] = Callback(TimeStepWizard(cfl=0.5, max_change=1.05, min_change=0.2, max_Δt=2.0),
+simulation.callbacks[:wizard] = Callback(TimeStepWizard(cfl=0.35, max_change=1.05, min_change=0.2, max_Δt=1.0),
                                          IterationInterval(5))
 using Oceanostics.ProgressMessengers: BasicTimeMessenger
 simulation.callbacks[:progress] = Callback(BasicTimeMessenger(), IterationInterval(50))
