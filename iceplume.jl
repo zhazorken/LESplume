@@ -43,6 +43,7 @@ function parse_cli()
         "face_angle" => 90.0, "discharge" => 150.0, "outlet_w" => 24.0, "outlet_h" => 6.0,
         "Lz" => 150.0, "Ly" => 192.0, "Lx" => 500.0, "dz" => 0.75, "fine_x" => 375.0,
         "dx_max" => 18.6, "stop_time" => 45.0, "output_interval" => 300.0,   # dz/fine_x/dx_max = Ovall 2025
+        "slice_interval" => 10.0,   # cadence [s] for the 2-D midy/face slices (drop to 1 for NaN diagnosis)
         "fine_y" => 100.0, "dy_max" => 8.0,   # y: uniform dz within |y|<fine_y (middle 2·fine_y), then stretch to dy_max
         "fine_z" => 120.0, "dz_surf" => 4.0,  # z: uniform dz to fine_z, then stretch to dz_surf toward the surface
         "checkpoint_interval" => 5.0, "wall_time_limit" => Inf,
@@ -314,11 +315,11 @@ simulation.output_writers[:fields] = NetCDFWriter(model, outputs;
     global_attributes = gattrs, overwrite_existing = overwrite)
 simulation.output_writers[:face] = NetCDFWriter(model, outputs;
     filename = joinpath(outdir, "$(prefix)_face.nc"),
-    schedule = TimeInterval(10seconds), indices = (face_ix, :, :),
+    schedule = TimeInterval(cli["slice_interval"] * seconds), indices = (face_ix, :, :),
     global_attributes = gattrs, overwrite_existing = overwrite)
 simulation.output_writers[:midy] = NetCDFWriter(model, outputs;
     filename = joinpath(outdir, "$(prefix)_midy.nc"),
-    schedule = TimeInterval(10seconds), indices = (:, round(Int, Ny/2), :),
+    schedule = TimeInterval(cli["slice_interval"] * seconds), indices = (:, round(Int, Ny/2), :),
     global_attributes = gattrs, overwrite_existing = overwrite)
 
 uw = Field(@at (Center, Center, Center) u * w)

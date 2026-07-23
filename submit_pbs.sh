@@ -59,6 +59,15 @@ else
     ARGS="--simname=cg_overcut634 --terminus=overcut --face_angle=63.4"   # 2:1 headline overcut
 fi
 
+# DIAGNOSTIC mode: qsub -v CASE=vertical,DIAG=1 submit_pbs.sh — 1-s slices, stop at 2 model-min, no
+# checkpoint, into a separate <OUTDIR>_diag. Captures the frames right before a NaN so we can see
+# WHERE it blows up. (--stop_time/--slice_interval here override the defaults below; last wins.)
+EXTRA=""
+if [ "${DIAG:-0}" = "1" ]; then
+    EXTRA="--slice_interval=1 --stop_time=2 --checkpoint_interval=999 --output_interval=60"
+    OUTDIR="${OUTDIR%/}_diag"; mkdir -p "$OUTDIR"
+fi
+
 # Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 10 m tall — a
 # deliberate deviation from the paper's 24×6 (NOT a paper reproduction): the taller outlet drops
 # U_in from 1.04 to 0.625 m/s, shortening the jet length L_M ~7.5→5.1 m so the plume detaches less.
@@ -70,6 +79,7 @@ fi
 time $JULIA --project iceplume.jl \
     $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
     --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
+    $EXTRA \
     2>&1 | tee logs/${CASE}.out
 
 qstat -f $PBS_JOBID >> logs/iceplume_cg.log
