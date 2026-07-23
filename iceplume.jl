@@ -169,7 +169,7 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
           W = cli["outlet_w"], H = cli["outlet_h"], U_in,
           U_out_peak, z_out, δ_out,
           σ_src = cli["sig_src"], σ_spg = 10.0, x_src = 3 * dx_fine,
-          L_sponge = 60.0,
+          L_sponge = 60.0, t_ramp = 60.0,
           Cᴰ = 2.5e-3)
 @info "Derived" U_in U_out_peak I_s x_gl
 #---
@@ -216,8 +216,11 @@ bcpar = (; Cᴰ = params.Cᴰ)
 # (u=U_in ⇒ Q = U_in·W·H drives the along-channel jet — the runway), balanced by a SMOOTH east
 # outflow g(z)=½(1+tanh((z−z_out)/δ_out)) scaled to U_out_peak so ∫∫ = Q. The smooth profile avoids
 # the hard 60 m-depth jump that stalls the CG preconditioner. Pure arithmetic ⇒ GPU-safe.
-@inline u_west_in(y,z,t,p)  = ifelse((abs(y) < p.W/2) & (z < p.H), p.U_in, zero(p.U_in))
-@inline u_east_out(y,z,t,p) = p.U_out_peak * 0.5*(1 + tanh((z - p.z_out)/p.δ_out))
+# Ramp inflow AND outflow together from 0→full over t_ramp s (avoids the impulsive-start pressure
+# shock that NaN'd the short-channel vertical case; ramping both keeps the net boundary flux ≈0).
+@inline _ramp(t,p) = min(t / p.t_ramp, 1.0)
+@inline u_west_in(y,z,t,p)  = ifelse((abs(y) < p.W/2) & (z < p.H), p.U_in * _ramp(t,p), zero(p.U_in))
+@inline u_east_out(y,z,t,p) = p.U_out_peak * 0.5*(1 + tanh((z - p.z_out)/p.δ_out)) * _ramp(t,p)
 u_bcs = FieldBoundaryConditions(immersed = τu_bc,
                                 west = OpenBoundaryCondition(u_west_in,  parameters = params),
                                 east = OpenBoundaryCondition(u_east_out, parameters = params))
