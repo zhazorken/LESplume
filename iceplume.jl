@@ -49,6 +49,11 @@ function parse_cli()
         "checkpoint_interval" => 5.0, "wall_time_limit" => Inf,
         "cg_reltol" => 1e-5, "cg_maxiter" => 30.0,   # CG Poisson solver: looser reltol = fewer iters
         "channel_len" => 10.0,   # minimum subglacial-channel length in x [m]; face shifts out if shorter
+        "inject" => "open",      # "open" = open-BC runway (west inflow/east outflow); "closed" = interior nudge
+        "timestepper" => "QAB2", # "QAB2" (1 pressure solve/step) or "RK3" (3/step, more robust/stable)
+        "weno" => 5.0,           # WENO advection order (3=more dissipative/stable, 5=default)
+        "nu" => 0.0,             # extra explicit viscosity+diffusivity [m²/s] on top of AMD (0=off); damps edges
+        "bottom_slope" => 0.0,   # fjord-floor ramp dz/dx (0=flat); softens the grounding-line corner
         "sig_src" => 2.0,        # discharge-source relaxation time [s]; larger = gentler (tune vs Δt)
         "outdir" => "")   # output + checkpoints dir; empty ⇒ <rundir>/output
     provided = Set{String}()
@@ -145,8 +150,11 @@ if immersed_ice
     # face. Carving it to ocean (0) turns the nudged source region (|y|<W/2, z<H) into a real
     # channel, so the discharge exits as a coherent, developed jet through an ice-face opening —
     # instead of materializing in a 2 m sliver at the face and spraying off (the old behavior).
-    ice_mask = let a = xf_a, b = xf_b, Wc = cli["outlet_w"], Hc = cli["outlet_h"]
-        (x, y, z) -> ifelse((x < a + b * z) & !((abs(y) < Wc/2) & (z < Hc)), 1, 0)  # 1 ice, 0 ocean
+    # Optional gentle fjord-floor ramp (--bottom_slope s>0): solid below z = s·(x−x_gl) east of the
+    # terminus, so the grounding-line corner is obtuse rather than a sharp 90° (softens that corner).
+    ice_mask = let a = xf_a, b = xf_b, Wc = cli["outlet_w"], Hc = cli["outlet_h"], s = cli["bottom_slope"], xg = x_gl
+        (x, y, z) -> ifelse(((x < a + b * z) & !((abs(y) < Wc/2) & (z < Hc))) | (z < s * max(x - xg, 0.0)),
+                            1, 0)  # 1 ice/bed, 0 ocean
     end
     grid = ImmersedBoundaryGrid(grid_base, GridFittedBoundary(ice_mask))
     @info "Immersed $(cli["terminus"]) ice face: x_face(z)=$(round(xf_a))$(xf_b<0 ? "" : "+")$(round(xf_b,digits=3))·z; grounding line x=$(round(x_gl)) m"
@@ -158,19 +166,17 @@ end
 #---
 
 #+++ Parameters
-U_in = cli["discharge"] / (cli["outlet_w"] * cli["outlet_h"])   # channel inflow speed [m/s]
-# SMOOTH east-outflow profile g(z)=½(1+tanh((z−z_out)/δ_out)): outflow concentrated above 60 m depth
-# but WITHOUT the hard jump (the discontinuity stalls the CG preconditioner). Peak amplitude is
-# normalized so the discrete flux ∫∫ u_out dy dz = Q exactly (mass balance ⇒ CG stays well-posed).
-z_out = Lz - 60.0; δ_out = 15.0
-zC = 0.5 .* (z_faces[1:end-1] .+ z_faces[2:end]); Δzc = diff(z_faces)
-I_s = sum(0.5 .* (1 .+ tanh.((zC .- z_out) ./ δ_out)) .* Δzc)      # ∫ g(z) dz  [m]
-U_out_peak = cli["discharge"] / (Ly * I_s)                        # Ly · ∫g · U_peak = Q
-# TAPERED inflow: a smooth bump that →0 over δ_e at the outlet sides (|y|=W/2) and top (z=H), so the
-# inflow has NO top-hat discontinuity at the sharp ice edges of the carved opening (that jump seeded
-# the NaN). Peak U_in_peak is normalized so ∫∫ bump dy dz = W·H ⇒ same 150 m³/s discharge.
+U_in = cli["discharge"] / (cli["outlet_w"] * cli["outlet_h"])   # mean channel inflow speed [m/s]
+z_out = Lz - 60.0; δ_out = 15.0            # fjord-mouth outflow layer (top 60 m), tanh half-width
+U_out = cli["discharge"] / (Ly * 60.0)     # CLOSED-mode outflow sponge target (uniform above 60 m)
 Wc = cli["outlet_w"]; Hc = cli["outlet_h"]; δ_e = 2.0
 yC = 0.5 .* (y_faces[1:end-1] .+ y_faces[2:end]); Δyc = diff(y_faces)
+zC = 0.5 .* (z_faces[1:end-1] .+ z_faces[2:end]); Δzc = diff(z_faces)
+# OPEN-mode smooth outflow g(z)=½(1+tanh((z−z_out)/δ_out)) normalized so ∫∫ = Q (mass balance).
+I_s = sum(0.5 .* (1 .+ tanh.((zC .- z_out) ./ δ_out)) .* Δzc)
+U_out_peak = cli["discharge"] / (Ly * I_s)
+# TAPERED inflow/source bump: →0 over δ_e at the outlet sides (|y|=W/2) and top (z=H), so there is
+# NO top-hat velocity discontinuity at the sharp ice edges. Peak normalized so ∫∫ bump dy dz = W·H.
 bump0(y,z) = clamp((Wc/2 - abs(y))/δ_e, 0.0, 1.0) * clamp((Hc - z)/δ_e, 0.0, 1.0)
 A_bump = 0.0
 for (k, zk) in enumerate(zC), (j, yj) in enumerate(yC)
@@ -180,11 +186,11 @@ end
 U_in_peak = cli["discharge"] / A_bump
 params = (; Lz, Lx, Ly, xf_a, xf_b,
           W = cli["outlet_w"], H = cli["outlet_h"], U_in, U_in_peak, δ_e,
-          U_out_peak, z_out, δ_out,
+          U_out, U_out_peak, z_out, δ_out, t_ramp = 60.0,
           σ_src = cli["sig_src"], σ_spg = 10.0, x_src = 3 * dx_fine,
-          L_sponge = 60.0, t_ramp = 60.0,
+          L_sponge = 60.0,
           Cᴰ = 2.5e-3)
-@info "Derived" U_in U_out_peak I_s x_gl
+@info "Derived" U_in U_in_peak U_out U_out_peak x_gl
 #---
 
 #+++ Ambient (vertical gravity ⇒ z is true height; no rotation)
@@ -192,26 +198,34 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
 @inline S∞(z) = S_ambient(z)
 #---
 
-#+++ Discharge freshwater source + fjord-side tracer sponge. The u VOLUME (and the one-way
-#    subglacial-channel RUNWAY) is set by the OPEN boundaries below — a momentum nudge against the
-#    closed back wall cannot drive net through-flow, so open boundaries are required for the runway.
+#+++ Discharge interior source + fjord-mouth outflow sponge — CLOSED domain (no open boundaries).
+# The open-BC inflow through the immersed-ice opening was numerically unstable (NaN at the sharp
+# outlet edges, tapered or not), so the discharge is injected as an INTERIOR SOURCE (saqqarleq-style,
+# tested stable): relax u→the tapered outlet profile and T,S→0 (fresh) over the channel; the buoyant
+# water rises as the plume and the estuarine outflow leaves via the east sponge. Net divergence ≈0.
 @inline x_face(z, p) = p.xf_a + p.xf_b * z
-# Keep the carved channel fresh/cold (T=0,S=0) so the west inflow is buoyant. The along-channel jet
-# comes from the west-inflow BC, not an interior u-nudge.
 @inline in_outlet(x, y, z, p) = (x < x_face(z, p) + p.x_src) & (abs(y) < p.W/2) & (z < p.H)
+@inline _bump(y,z,p) = clamp((p.W/2 - abs(y))/p.δ_e, 0.0, 1.0) * clamp((p.H - z)/p.δ_e, 0.0, 1.0)
+@inline _ramp(t,p) = min(t / p.t_ramp, 1.0)
+@inline src_u(x,y,z,t,u,p) = ifelse(in_outlet(x,y,z,p), -(u - p.U_in_peak*_bump(y,z,p))/p.σ_src, zero(u))
 @inline src_T(x,y,z,t,T,p) = ifelse(in_outlet(x,y,z,p), -(T - 0.0)/p.σ_src, zero(T))
 @inline src_S(x,y,z,t,S,p) = ifelse(in_outlet(x,y,z,p), -(S - 0.0)/p.σ_src, zero(S))
 
-# Fjord (east) tracer sponge: relax T,S→ambient near the outflow so exiting water is reasonable.
+# Fjord (east) sponge: drive the compensating outflow (u→U_out above 60 m depth) and relax T,S→ambient.
 @inline east_frac(x, p) = clamp((x - (p.Lx - p.L_sponge)) / p.L_sponge, 0.0, 1.0)
+@inline spg_u(x,y,z,t,u,p) = -east_frac(x,p)/p.σ_spg * (u - ifelse(z > p.z_out, p.U_out, zero(u)))
 @inline spg_T(x,y,z,t,T,p) = -east_frac(x,p)/p.σ_spg * (T - T∞(z))
 @inline spg_S(x,y,z,t,S,p) = -east_frac(x,p)/p.σ_spg * (S - S∞(z))
 
+@inline f_u(x,y,z,t,u,p) = src_u(x,y,z,t,u,p) + spg_u(x,y,z,t,u,p)
 @inline f_T(x,y,z,t,T,p) = src_T(x,y,z,t,T,p) + spg_T(x,y,z,t,T,p)
 @inline f_S(x,y,z,t,S,p) = src_S(x,y,z,t,S,p) + spg_S(x,y,z,t,S,p)
 FT = Forcing(f_T, field_dependencies = :T, parameters = params)
 FS = Forcing(f_S, field_dependencies = :S, parameters = params)
-forcing = (T = FT, S = FS)
+# CLOSED mode drives u with an interior nudge; OPEN mode leaves u to the boundary inflow/outflow.
+forcing = cli["inject"] == "closed" ?
+    (u = Forcing(f_u, field_dependencies = :u, parameters = params), T = FT, S = FS) :
+    (T = FT, S = FS)
 #---
 
 # Quadratic drag on the ICE, always via the IMMERSED boundary (GPU-safe for all cases; a
@@ -225,20 +239,15 @@ bcpar = (; Cᴰ = params.Cᴰ)
 τv_bc = FluxBoundaryCondition(τv, field_dependencies=(:u,:v,:w), parameters=bcpar)
 τw_bc = FluxBoundaryCondition(τw, field_dependencies=(:u,:v,:w), parameters=bcpar)
 
-# Discharge VOLUME + runway via prescribed OPEN boundaries: west inflow over the channel opening
-# (u=U_in ⇒ Q = U_in·W·H drives the along-channel jet — the runway), balanced by a SMOOTH east
-# outflow g(z)=½(1+tanh((z−z_out)/δ_out)) scaled to U_out_peak so ∫∫ = Q. The smooth profile avoids
-# the hard 60 m-depth jump that stalls the CG preconditioner. Pure arithmetic ⇒ GPU-safe.
-# Ramp inflow AND outflow together from 0→full over t_ramp s (avoids the impulsive-start pressure
-# shock that NaN'd the short-channel vertical case; ramping both keeps the net boundary flux ≈0).
-@inline _ramp(t,p) = min(t / p.t_ramp, 1.0)
-# smooth bump: 1 in the interior, linearly →0 over δ_e at the sides (|y|→W/2) and top (z→H)
-@inline _bump(y,z,p) = clamp((p.W/2 - abs(y))/p.δ_e, 0.0, 1.0) * clamp((p.H - z)/p.δ_e, 0.0, 1.0)
+# OPEN-mode boundaries: tapered inflow through the channel opening (the runway) + smooth tanh east
+# outflow, both ramped over t_ramp. CLOSED mode uses walls only (u driven by the interior nudge).
 @inline u_west_in(y,z,t,p)  = ifelse((abs(y) < p.W/2) & (z < p.H), p.U_in_peak * _bump(y,z,p) * _ramp(t,p), zero(p.U_in_peak))
 @inline u_east_out(y,z,t,p) = p.U_out_peak * 0.5*(1 + tanh((z - p.z_out)/p.δ_out)) * _ramp(t,p)
-u_bcs = FieldBoundaryConditions(immersed = τu_bc,
-                                west = OpenBoundaryCondition(u_west_in,  parameters = params),
-                                east = OpenBoundaryCondition(u_east_out, parameters = params))
+u_bcs = cli["inject"] == "closed" ?
+    FieldBoundaryConditions(immersed = τu_bc) :
+    FieldBoundaryConditions(immersed = τu_bc,
+                            west = OpenBoundaryCondition(u_west_in,  parameters = params),
+                            east = OpenBoundaryCondition(u_east_out, parameters = params))
 v_bcs = FieldBoundaryConditions(immersed = τv_bc)
 w_bcs = FieldBoundaryConditions(immersed = τw_bc)
 T_bcs = FieldBoundaryConditions(top = FluxBoundaryCondition(0))
@@ -251,13 +260,19 @@ eos = LinearEquationOfState(thermal_expansion = 3.87e-5, haline_contraction = 7.
 # QuasiAdamsBashforth2: ONE pressure solve per step (vs THREE for the RK3 default) — ~3× fewer
 # CG solves. The CG solver already uses the FFT solver as a preconditioner, so a modest maxiter
 # and a looser reltol keep the iteration count low; tune via --cg_reltol / --cg_maxiter.
+# Numerics knobs (--timestepper/--weno/--nu): RK3 is more robust than QAB2 (3 solves/step); lower
+# WENO order and/or a little explicit ν add dissipation to tame the immersed-edge instability.
+tstep   = cli["timestepper"] == "RK3" ? :RungeKutta3 : :QuasiAdamsBashforth2
+closure = cli["nu"] > 0 ? (AnisotropicMinimumDissipation(), ScalarDiffusivity(ν = cli["nu"], κ = cli["nu"])) :
+                          AnisotropicMinimumDissipation()
+@info "Numerics" inject=cli["inject"] timestepper=tstep weno=Int(cli["weno"]) nu=cli["nu"]
 model = NonhydrostaticModel(grid;
-                            timestepper = :QuasiAdamsBashforth2,
+                            timestepper = tstep,
                             buoyancy = SeawaterBuoyancy(equation_of_state = eos),
                             coriolis = FPlane(f = 1.22e-4),
-                            advection = WENO(order = 5),
+                            advection = WENO(order = Int(cli["weno"])),
                             tracers = (:T, :S),
-                            closure = AnisotropicMinimumDissipation(),
+                            closure = closure,
                             forcing = forcing,
                             pressure_solver = ConjugateGradientPoissonSolver(grid;
                                 reltol = cli["cg_reltol"], maxiter = round(Int, cli["cg_maxiter"])),

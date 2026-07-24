@@ -68,6 +68,15 @@ if [ "${DIAG:-0}" = "1" ]; then
     OUTDIR="${OUTDIR%/}_diag"; mkdir -p "$OUTDIR"
 fi
 
+# Experiment knobs — override any via qsub -v, e.g.
+#   qsub -v CASE=vertical,DIAG=1,TS=RK3,NU=0.5,WENO=3,SLOPE=0.05,INJECT=open submit_pbs.sh
+EXP=""
+[ -n "${INJECT:-}" ] && EXP="$EXP --inject=$INJECT"
+[ -n "${TS:-}" ]     && EXP="$EXP --timestepper=$TS"
+[ -n "${WENO:-}" ]   && EXP="$EXP --weno=$WENO"
+[ -n "${NU:-}" ]     && EXP="$EXP --nu=$NU"
+[ -n "${SLOPE:-}" ]  && EXP="$EXP --bottom_slope=$SLOPE"
+
 # Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 10 m tall — a
 # deliberate deviation from the paper's 24×6 (NOT a paper reproduction): the taller outlet drops
 # U_in from 1.04 to 0.625 m/s, shortening the jet length L_M ~7.5→5.1 m so the plume detaches less.
@@ -79,7 +88,7 @@ fi
 time $JULIA --project iceplume.jl \
     $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
     --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
-    $EXTRA \
+    $EXP $EXTRA \
     2>&1 | tee logs/${CASE}.out
 
 qstat -f $PBS_JOBID >> logs/iceplume_cg.log
