@@ -54,6 +54,8 @@ function parse_cli()
         "weno" => 5.0,           # WENO advection order (3=more dissipative/stable, 5=default)
         "nu" => 0.0,             # extra explicit viscosity+diffusivity [m²/s] on top of AMD (0=off); damps edges
         "bottom_slope" => 0.0,   # fjord-floor ramp dz/dx (0=flat); softens the grounding-line corner
+        "flare" => 6.0,          # flared-opening height added at the face [m]; softens the top edge (0=sharp)
+        "flare_len" => 15.0,     # along-channel length over which the opening flares AND the nudge tapers [m]
         "sig_src" => 2.0,        # discharge-source relaxation time [s]; larger = gentler (tune vs Δt)
         "outdir" => "")   # output + checkpoints dir; empty ⇒ <rundir>/output
     provided = Set{String}()
@@ -152,9 +154,14 @@ if immersed_ice
     # instead of materializing in a 2 m sliver at the face and spraying off (the old behavior).
     # Optional gentle fjord-floor ramp (--bottom_slope s>0): solid below z = s·(x−x_gl) east of the
     # terminus, so the grounding-line corner is obtuse rather than a sharp 90° (softens that corner).
-    ice_mask = let a = xf_a, b = xf_b, Wc = cli["outlet_w"], Hc = cli["outlet_h"], s = cli["bottom_slope"], xg = x_gl
-        (x, y, z) -> ifelse(((x < a + b * z) & !((abs(y) < Wc/2) & (z < Hc))) | (z < s * max(x - xg, 0.0)),
-                            1, 0)  # 1 ice/bed, 0 ocean
+    ice_mask = let a = xf_a, b = xf_b, Wc = cli["outlet_w"], Hc = cli["outlet_h"], s = cli["bottom_slope"], xg = x_gl, fl = cli["flare"], Lf = cli["flare_len"]
+        (x, y, z) -> begin
+            xf = a + b * z
+            # opening flares Hc→Hc+fl over the last Lf before the face ⇒ smooth (chamfered) top edge,
+            # so the discharge doesn't separate/accelerate off a sharp corner as it exits.
+            ztop = Hc + fl * clamp((Lf - (xf - x)) / Lf, 0.0, 1.0)
+            ifelse(((x < xf) & !((abs(y) < Wc/2) & (z < ztop))) | (z < s * max(x - xg, 0.0)), 1, 0)  # 1 ice/bed, 0 ocean
+        end
     end
     grid = ImmersedBoundaryGrid(grid_base, GridFittedBoundary(ice_mask))
     @info "Immersed $(cli["terminus"]) ice face: x_face(z)=$(round(xf_a))$(xf_b<0 ? "" : "+")$(round(xf_b,digits=3))·z; grounding line x=$(round(x_gl)) m"
@@ -188,7 +195,7 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
           W = cli["outlet_w"], H = cli["outlet_h"], U_in, U_in_peak, δ_e,
           U_out, U_out_peak, z_out, δ_out, t_ramp = 60.0,
           σ_src = cli["sig_src"], σ_spg = 10.0, x_src = 3 * dx_fine,
-          L_sponge = 60.0,
+          L_sponge = 60.0, L_flare = cli["flare_len"],
           Cᴰ = 2.5e-3)
 @info "Derived" U_in U_in_peak U_out U_out_peak x_gl
 #---
@@ -204,12 +211,16 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
 # tested stable): relax u→the tapered outlet profile and T,S→0 (fresh) over the channel; the buoyant
 # water rises as the plume and the estuarine outflow leaves via the east sponge. Net divergence ≈0.
 @inline x_face(z, p) = p.xf_a + p.xf_b * z
-@inline in_outlet(x, y, z, p) = (x < x_face(z, p) + p.x_src) & (abs(y) < p.W/2) & (z < p.H)
+# Nudge STRICTLY inside the conduit (x < x_face, no +x_src poke-out into the fjord), and taper the
+# nudge RATE to 0 over L_flare before the face — tracers are set deep in the channel and advect out
+# gently rather than being hard-clamped at the exit (fixes the fresh-water poke-out past the face).
+@inline in_channel(x, y, z, p) = (x < x_face(z, p)) & (abs(y) < p.W/2) & (z < p.H)
+@inline nrate(x, z, p) = clamp((x_face(z,p) - x)/p.L_flare, 0.0, 1.0) / p.σ_src
 @inline _bump(y,z,p) = clamp((p.W/2 - abs(y))/p.δ_e, 0.0, 1.0) * clamp((p.H - z)/p.δ_e, 0.0, 1.0)
 @inline _ramp(t,p) = min(t / p.t_ramp, 1.0)
-@inline src_u(x,y,z,t,u,p) = ifelse(in_outlet(x,y,z,p), -(u - p.U_in_peak*_bump(y,z,p))/p.σ_src, zero(u))
-@inline src_T(x,y,z,t,T,p) = ifelse(in_outlet(x,y,z,p), -(T - 0.0)/p.σ_src, zero(T))
-@inline src_S(x,y,z,t,S,p) = ifelse(in_outlet(x,y,z,p), -(S - 0.0)/p.σ_src, zero(S))
+@inline src_u(x,y,z,t,u,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(u - p.U_in_peak*_bump(y,z,p)), zero(u))
+@inline src_T(x,y,z,t,T,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(T - 0.0), zero(T))
+@inline src_S(x,y,z,t,S,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(S - 0.0), zero(S))
 
 # Fjord (east) sponge: drive the compensating outflow (u→U_out above 60 m depth) and relax T,S→ambient.
 @inline east_frac(x, p) = clamp((x - (p.Lx - p.L_sponge)) / p.L_sponge, 0.0, 1.0)
