@@ -53,10 +53,12 @@ DOMAIN="--Ly=743 --Lx=4000 --fine_x=375 --dz=0.75 --dx_max=18.6 --fine_y=150 --d
 # `qsub -v CASE=overcut,OUTDIR=/glade/derecho/scratch/$USER/LESplume submit_pbs.sh` for scratch.
 OUTDIR="${OUTDIR:-/glade/work/$USER/LESplume_runs}"
 mkdir -p "$OUTDIR"
+# TAG (optional, via -v TAG=rk3) makes the simname/log unique so parallel experiments don't collide.
+TAG="${TAG:-}"; SFX="${TAG:+_$TAG}"
 if [ "$CASE" = "vertical" ]; then
-    ARGS="--simname=cg_vertical --face_angle=90"
+    ARGS="--simname=cg_vertical${SFX} --face_angle=90"
 else
-    ARGS="--simname=cg_overcut634 --terminus=overcut --face_angle=63.4"   # 2:1 headline overcut
+    ARGS="--simname=cg_overcut634${SFX} --terminus=overcut --face_angle=63.4"   # 2:1 headline overcut
 fi
 
 # DIAGNOSTIC mode: qsub -v CASE=vertical,DIAG=1 submit_pbs.sh — 1-s slices, stop at 2 model-min, no
@@ -89,6 +91,6 @@ time $JULIA --project iceplume.jl \
     $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
     --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
     $EXP $EXTRA \
-    2>&1 | tee logs/${CASE}.out
+    2>&1 | tee logs/${CASE}${SFX}.out
 
 qstat -f $PBS_JOBID >> logs/iceplume_cg.log
