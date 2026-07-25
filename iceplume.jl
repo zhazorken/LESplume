@@ -162,7 +162,7 @@ if immersed_ice
             fr = clamp((Lf - (xf - x)) / Lf, 0.0, 1.0)   # 0 deep in the channel → 1 at the face
             # opening top: flares Hc→Hc+fl near the face (chamfer), plus an optional spanwise (y)
             # corrugation (amplitude ra, wavelength rl) that ridges the exit to trip 3-D turbulence.
-            ztop = Hc + fl * fr + ra * fr * sin(2π * y / rl)
+            ztop = Hc + fl * fr + ra * fr * cos(2π * y / rl)   # cosine → symmetric about y=0 (crest on centerline)
             ifelse(((x < xf) & !((abs(y) < Wc/2) & (z < ztop))) | (z < s * max(x - xg, 0.0)), 1, 0)  # 1 ice/bed, 0 ocean
         end
     end

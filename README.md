@@ -12,7 +12,7 @@ Built on the pinned **0.109.2** environment from the sibling `IceShelfCavity` pr
 ## Results (2024 conditions)
 
 Vertical and overcut runs at the 2024 setup — grounding-line depth 150 m, discharge 150 m³/s,
-24 × 10 m outlet — with the discharge injected through an **open-boundary subglacial channel**
+24 × 6 m outlet (the paper's point-plume geometry) — with the discharge injected through an **open-boundary subglacial channel**
 (the "runway"), stepped with **RungeKutta3** for stability, on an x/y/z-stretched (~85 M-cell)
 grid. x–z transects of `u, w, T, S` (mean of the last 100 s, ≈ 12 min of model time):
 
@@ -130,8 +130,8 @@ The 3-D `*_fields.nc`/`*_timeavg.nc` are large; the 2-D `*_midy.nc`/`*_face.nc` 
 | Fjord-exit outflow | above 60 m depth, 0 below, = SGD flux | same (smooth tanh profile) | ✓ match |
 | Run length / average | 45 min / last 15 min | **45 min / 15-min window** | ✓ match |
 | SGS closure | Deardorff (1980) + Ducros (1996) | AnisotropicMinimumDissipation | ~ both LES; different scheme |
-| **Outlet** | 24 m × **6 m** | 24 m × **10 m** | *deliberate*: lowers U_in 1.04→0.62, less jet detachment |
-| **Discharge** | 75 m³/s | **150 m³/s** | *2024 value* (`--discharge`) |
+| Outlet | 24 m × 6 m | 24 m × 6 m | ✓ match (paper geometry) |
+| **Discharge** | 75 m³/s | **150 m³/s** | *2024 value* (`--discharge`) → U_in = 1.04 m/s (2× paper's 0.52) |
 | **Grounding-line depth** | 172 m | **150 m** | *2024 value* (`--Lz`) |
 | **Ambient T/S** | 2018 BPT profile | **2024 cast** | *2024 value* |
 | Fjord width `Ly` | 743 m | **743 m** (stretched: fine middle 300 m) | ✓ (y-stretched for cost) |

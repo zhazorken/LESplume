@@ -81,16 +81,17 @@ EXP=""
 [ -n "${RA:-}" ]     && EXP="$EXP --ridge_amp=$RA"     # spanwise ridge amplitude [m] (turbulence trip)
 [ -n "${RL:-}" ]     && EXP="$EXP --ridge_len=$RL"     # ridge wavelength in y [m]
 
-# Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 10 m tall — a
-# deliberate deviation from the paper's 24×6 (NOT a paper reproduction): the taller outlet drops
-# U_in from 1.04 to 0.625 m/s, shortening the jet length L_M ~7.5→5.1 m so the plume detaches less.
+# Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 6 m tall — the
+# paper's (Ovall 2025) point-plume geometry. At Q=150 this gives U_in=1.04 m/s (2x the paper's
+# 0.52, since the paper used Q=75); the outlet size does NOT drive the near-field tilt (24x10
+# tested; no help), so we match the paper geometry and use the turbulence trip (WENO/ridge) instead.
 # stop_time=45 min is the MODEL target. 23 h PBS walltime: at ~12 wall-s per model-s the full
 # 45-min run finishes in ~9-10 h — ONE overnight leg. --wall_time_limit=22.8 checkpoints inside the
 # wall if it runs long; re-submit the SAME command to auto-resume. Checkpoints every 3 min = safety.
 # NOTE: do NOT add --pkgimages=no — it disables Julia's precompiled images and breaks CUDA.jl's
 # GPU detection (has_cuda_gpu()→false ⇒ "a CUDA GPU was not found"). Plain --project sees the A100.
 time $JULIA --project iceplume.jl \
-    $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=10 --Lz=150 \
+    $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=6 --Lz=150 \
     --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
     $EXP $EXTRA \
     2>&1 | tee logs/${CASE}${SFX}.out
