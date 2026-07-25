@@ -78,6 +78,8 @@ EXP=""
 [ -n "${WENO:-}" ]   && EXP="$EXP --weno=$WENO"
 [ -n "${NU:-}" ]     && EXP="$EXP --nu=$NU"
 [ -n "${SLOPE:-}" ]  && EXP="$EXP --bottom_slope=$SLOPE"
+[ -n "${RA:-}" ]     && EXP="$EXP --ridge_amp=$RA"     # spanwise ridge amplitude [m] (turbulence trip)
+[ -n "${RL:-}" ]     && EXP="$EXP --ridge_len=$RL"     # ridge wavelength in y [m]
 
 # Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 10 m tall — a
 # deliberate deviation from the paper's 24×6 (NOT a paper reproduction): the taller outlet drops
