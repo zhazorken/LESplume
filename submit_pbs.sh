@@ -80,6 +80,8 @@ EXP=""
 [ -n "${SLOPE:-}" ]  && EXP="$EXP --bottom_slope=$SLOPE"
 [ -n "${RA:-}" ]     && EXP="$EXP --ridge_amp=$RA"     # spanwise ridge amplitude [m] (turbulence trip)
 [ -n "${RL:-}" ]     && EXP="$EXP --ridge_len=$RL"     # ridge wavelength in y [m]
+[ -n "${AVGINT:-}" ] && EXP="$EXP --avg_interval=$AVGINT"   # 3-D time-avg record interval [min] (default 15)
+[ -n "${AVGWIN:-}" ] && EXP="$EXP --avg_window=$AVGWIN"     # 3-D time-avg window [min] (default 15). 25-35 min: AVGINT=35,AVGWIN=10
 
 # Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 6 m tall — the
 # paper's (Ovall 2025) point-plume geometry. At Q=150 this gives U_in=1.04 m/s (2x the paper's

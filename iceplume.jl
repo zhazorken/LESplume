@@ -44,6 +44,7 @@ function parse_cli()
         "Lz" => 150.0, "Ly" => 192.0, "Lx" => 500.0, "dz" => 0.75, "fine_x" => 375.0,
         "dx_max" => 18.6, "stop_time" => 45.0, "output_interval" => 300.0,   # dz/fine_x/dx_max = Ovall 2025
         "slice_interval" => 10.0,   # cadence [s] for the 2-D midy/face slices (drop to 1 for NaN diagnosis)
+        "avg_interval" => 15.0, "avg_window" => 15.0,   # 3-D time-average [min]: record every avg_interval, averaged over the preceding avg_window (default 15/15 = Ovall's last-15-min). For a 25-35 min average: --avg_interval=35 --avg_window=10.
         "fine_y" => 100.0, "dy_max" => 8.0,   # y: uniform dz within |y|<fine_y (middle 2·fine_y), then stretch to dy_max
         "fine_z" => 120.0, "dz_surf" => 4.0,  # z: uniform dz to fine_z, then stretch to dz_surf toward the surface
         "checkpoint_interval" => 5.0, "wall_time_limit" => Inf,
@@ -368,11 +369,13 @@ simulation.output_writers[:midy] = NetCDFWriter(model, outputs;
 uw = Field(@at (Center, Center, Center) u * w)
 wT = Field(@at (Center, Center, Center) w * T)
 wS = Field(@at (Center, Center, Center) w * S)
-# 15-min averaging window (Ovall 2025 average the last 15 min of a 45-min run; the final
-# record here covers minutes 30–45).
+# Time-average window (default 15/15 min = Ovall 2025's last-15-min of a 45-min run; final
+# record covers minutes 30–45). Configurable: --avg_interval/--avg_window [min]. The window is
+# accumulated online over the avg_window preceding each avg_interval mark, so e.g.
+# --avg_interval=35 --avg_window=10 gives a single record at t=35 min averaging minutes 25–35.
 simulation.output_writers[:avg] = NetCDFWriter(model, (; u,v,w,T,S,uw,wT,wS);
     filename = joinpath(outdir, "$(prefix)_timeavg.nc"),
-    schedule = AveragedTimeInterval(15minutes, window = 15minutes),
+    schedule = AveragedTimeInterval(cli["avg_interval"] * minutes, window = cli["avg_window"] * minutes),
     global_attributes = gattrs, overwrite_existing = overwrite)
 
 simulation.output_writers[:checkpointer] = Checkpointer(model;
