@@ -12,23 +12,30 @@ Built on the pinned **0.109.2** environment from the sibling `IceShelfCavity` pr
 ## Results (2024 conditions)
 
 Vertical and overcut runs at the 2024 setup — grounding-line depth 150 m, discharge 150 m³/s,
-24 × 6 m outlet (the paper's point-plume geometry) — with the discharge injected through an **open-boundary subglacial channel**
-(the "runway"), stepped with **RungeKutta3** for stability, on an x/y/z-stretched (~85 M-cell)
-grid. x–z transects of `u, w, T, S` (mean of the last 100 s, ≈ 12 min of model time):
+24 × 6 m outlet (the paper's point-plume geometry) — with the discharge injected through an
+**open-boundary subglacial channel** (the "runway"), stepped with **RungeKutta3** for stability,
+on an x/y/z-stretched (~85 M-cell) grid.
 
-**Vertical terminus (90°)**
+**Turbulence trip — a cosine-corrugated outlet top.** To break the coherent starting jet and trip
+the plume turbulent near the grid scale, the top edge of the outlet is corrugated with a spanwise
+cosine ridge (`--ridge_amp`, `--ridge_len`), symmetric about the glacier centreline, growing in
+toward the face over the flare length:
 
-![Vertical terminus transect](figures/vertical_transect.png)
+![Cosine-corrugated outlet](figures/outlet_cosine.png)
 
-**Overcut terminus (63.4°)**
+**The ridge makes the vertical plume wall-attached.** Comparing the ridge run against an otherwise
+similar no-ridge run, the plume core stops leaning seaward and hugs the ice face (core within
+~1–2 m of the wall up to z = 100 m, versus ~26 m off the wall without the ridge):
 
-![Overcut terminus transect](figures/overcut_transect.png)
+![Ridge vs no-ridge, vertical](figures/ridge_vs_noridge_vertical.png)
+![Plume-core tilt, vertical](figures/tilt_vertical.png)
 
-Both show the fresh discharge running the conduit at ≈ U_in, exiting the ice-face opening, and
-rising as a turbulent plume. A **flared opening** (`--flare`, below) softens the sharp top edge
-of the outlet that otherwise accelerates the exit ~2× and over-tilts the near-field plume:
+**Vertical vs overcut.** The wall-attachment is dramatic on the vertical terminus; on the overcut
+(63.4°) the face recedes with height so the plume necessarily separates at the base corner and
+rises as a free — but well-tripped — plume (the ridge still straightens it partially):
 
-![Flared outlet opening](figures/flared_opening.png)
+![v8 ridge summary](figures/v8_ridge_summary.png)
+![Ridge vs no-ridge, overcut](figures/ridge_vs_noridge_overcut.png)
 
 ## What's different vs. `../newLES` (0.90.7, gravity-tilt)
 
