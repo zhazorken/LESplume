@@ -57,6 +57,7 @@ function parse_cli()
         "bottom_slope" => 0.0,   # fjord-floor ramp dz/dx (0=flat); softens the grounding-line corner
         "flare" => 6.0,          # flared-opening height added at the face [m]; softens the top edge (0=sharp)
         "flare_len" => 15.0,     # along-channel length over which the opening flares AND the nudge tapers [m]
+        "flare_curve" => 0.0,    # flare roof shape: 0=linear ramp; 1=curved (cosine smoothstep, no corners → Coandá, less separation)
         "ridge_amp" => 0.0,      # spanwise (y) corrugation amplitude of the opening top [m]; trips turbulence (0=smooth)
         "ridge_len" => 6.0,      # wavelength of that y-corrugation [m]
         "sig_src" => 2.0,        # discharge-source relaxation time [s]; larger = gentler (tune vs Δt)
@@ -157,13 +158,21 @@ if immersed_ice
     # instead of materializing in a 2 m sliver at the face and spraying off (the old behavior).
     # Optional gentle fjord-floor ramp (--bottom_slope s>0): solid below z = s·(x−x_gl) east of the
     # terminus, so the grounding-line corner is obtuse rather than a sharp 90° (softens that corner).
-    ice_mask = let a = xf_a, b = xf_b, Wc = cli["outlet_w"], Hc = cli["outlet_h"], s = cli["bottom_slope"], xg = x_gl, fl = cli["flare"], Lf = cli["flare_len"], ra = cli["ridge_amp"], rl = cli["ridge_len"]
+    ice_mask = let a = xf_a, b = xf_b, Wc = cli["outlet_w"], Hc = cli["outlet_h"], s = cli["bottom_slope"], xg = x_gl, fl = cli["flare"], Lf = cli["flare_len"], fc = cli["flare_curve"], ra = cli["ridge_amp"], rl = cli["ridge_len"]
         (x, y, z) -> begin
             xf = a + b * z
-            fr = clamp((Lf - (xf - x)) / Lf, 0.0, 1.0)   # 0 deep in the channel → 1 at the face
-            # opening top: flares Hc→Hc+fl near the face (chamfer), plus an optional spanwise (y)
-            # corrugation (amplitude ra, wavelength rl) that ridges the exit to trip 3-D turbulence.
-            ztop = Hc + fl * fr + ra * fr * cos(2π * y / rl)   # cosine → symmetric about y=0 (crest on centerline)
+            fr0 = clamp((Lf - (xf - x)) / Lf, 0.0, 1.0)   # 0 deep in the channel → 1 at the face
+            d  = xf - x                                    # distance back from the face [m] (>0 in ice)
+            # flare-roof added height, three shapes (fc): 0 = linear ramp; 1 = cosine smoothstep
+            # (tangent-horizontal both ends); 2 = CIRCULAR fillet of radius R=fl with centre a
+            # height R above the roof — the ice–ocean interface sweeps from horizontal (deep) to
+            # VERTICAL at the opening over the last R m (a rounded lip → Coandá, keeps flow attached).
+            add = fc > 1.5 ? (d < fl ? fl - sqrt(max(fl*fl - (fl - d)^2, 0.0)) : zero(x)) :
+                  fc > 0.5 ? fl * 0.5 * (1.0 - cos(π * fr0)) :
+                             fl * fr0
+            # opening top = channel roof Hc + flare, plus an optional spanwise (y) corrugation
+            # (amplitude ra, wavelength rl) that ridges the exit to trip 3-D turbulence.
+            ztop = Hc + add + ra * fr0 * cos(2π * y / rl)   # cosine → symmetric about y=0 (crest on centerline)
             ifelse(((x < xf) & !((abs(y) < Wc/2) & (z < ztop))) | (z < s * max(x - xg, 0.0)), 1, 0)  # 1 ice/bed, 0 ocean
         end
     end

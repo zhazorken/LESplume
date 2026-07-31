@@ -58,7 +58,10 @@ TAG="${TAG:-}"; SFX="${TAG:+_$TAG}"
 if [ "$CASE" = "vertical" ]; then
     ARGS="--simname=cg_vertical${SFX} --face_angle=90"
 else
-    ARGS="--simname=cg_overcut634${SFX} --terminus=overcut --face_angle=63.4"   # 2:1 headline overcut
+    # FACE overrides the overcut angle (default 63.4°; observed ≈67°, less-overcut 70° attaches better).
+    # simname encodes the angle (63.4->634, 70->70) so different angles keep separate checkpoints.
+    FACE="${FACE:-63.4}"; fdeg="${FACE/./}"
+    ARGS="--simname=cg_overcut${fdeg}${SFX} --terminus=overcut --face_angle=$FACE"
 fi
 
 # DIAGNOSTIC mode: qsub -v CASE=vertical,DIAG=1 submit_pbs.sh — 1-s slices, stop at 2 model-min, no
@@ -82,6 +85,9 @@ EXP=""
 [ -n "${RL:-}" ]     && EXP="$EXP --ridge_len=$RL"     # ridge wavelength in y [m]
 [ -n "${AVGINT:-}" ] && EXP="$EXP --avg_interval=$AVGINT"   # 3-D time-avg record interval [min] (default 15)
 [ -n "${AVGWIN:-}" ] && EXP="$EXP --avg_window=$AVGWIN"     # 3-D time-avg window [min] (default 15). 25-35 min: AVGINT=35,AVGWIN=10
+[ -n "${FCURVE:-}" ] && EXP="$EXP --flare_curve=$FCURVE"    # 1 = curved (Coandá) outlet ramp; 0 = linear
+[ -n "${FLARE:-}" ]  && EXP="$EXP --flare=$FLARE"           # flared-opening height [m] (default 6); bigger ramp = more attached
+[ -n "${FLEN:-}" ]   && EXP="$EXP --flare_len=$FLEN"        # flare length along channel [m] (default 15)
 
 # Discharge 150 m3/s, grounding line 150 m (2024 conditions). Outlet 24 m wide × 6 m tall — the
 # paper's (Ovall 2025) point-plume geometry. At Q=150 this gives U_in=1.04 m/s (2x the paper's
@@ -93,7 +99,7 @@ EXP=""
 # NOTE: do NOT add --pkgimages=no — it disables Julia's precompiled images and breaks CUDA.jl's
 # GPU detection (has_cuda_gpu()→false ⇒ "a CUDA GPU was not found"). Plain --project sees the A100.
 time $JULIA --project iceplume.jl \
-    $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=24 --outlet_h=6 --Lz=150 \
+    $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=${OW:-24} --outlet_h=${OH:-6} --Lz=150 \
     --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
     $EXP $EXTRA \
     2>&1 | tee logs/${CASE}${SFX}.out
