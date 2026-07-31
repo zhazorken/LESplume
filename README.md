@@ -37,6 +37,43 @@ rises as a free — but well-tripped — plume (the ridge still straightens it p
 ![v8 ridge summary](figures/v8_ridge_summary.png)
 ![Ridge vs no-ridge, overcut](figures/ridge_vs_noridge_overcut.png)
 
+## Overcut attachment case — 70° + circular roof fillet (matches observed plume attachment)
+
+The default overcut (63.4°) plume **detaches** from the terminus, but at LeConte / Xeitl Sít'
+the plume is observed to stay **attached** to the ice face and set up a lateral flow bifurcation
+(Ovall et al., Fig. 2). Attachment is controlled by the outlet velocity `U_in` (the jet's seaward
+momentum) together with the terminus geometry. This case reduces `U_in` and eases the overcut, and
+adds a **circular roof fillet** so the discharge turns onto the face via the Coandá effect rather
+than separating off a sharp corner:
+
+- **70° face** (`FACE=70`) — less overcut than 63.4°, closer to the observed ≈67°, so the face
+  slopes away from the plume less and it can stay attached.
+- **24 × 8 m outlet** (`OH=8`) — the larger cross-section drops `U_in` to **0.78 m/s** (from 1.04
+  at 24 × 6), cutting the seaward momentum that drives detachment.
+- **Circular roof fillet, radius R = 10 m** (`FCURVE=2`, `FLARE=10`) — the ice–ocean roof of the
+  opening sweeps from **horizontal** (deep in the channel) to **vertical** at the opening along a
+  quarter-circle whose centre sits a height `R` above the channel roof. This rounded lip
+  (`--flare_curve=2` selects the circular shape; the radius is `--flare`) gives the flow a smooth
+  surface to follow instead of a corner to separate from.
+
+![Model setup — 70° overcut, 24×8 outlet, R=10 fillet](figures/setup_overcut70_fillet.png)
+
+Launch (fresh run, `simname = cg_overcut70_fillet`):
+
+```bash
+qsub -v CASE=overcut,FACE=70,OH=8,TS=RK3,FCURVE=2,FLARE=10,TAG=fillet,OUTDIR=/glade/work/$USER/LESplume_runs submit_pbs.sh
+```
+
+If it still detaches at `U_in = 0.78`, the next lever is a bigger outlet — `OH=10` → 0.63 m/s or
+`OH=12` → 0.52 m/s (the paper's attached value) — no code change needed.
+
+**Three-case comparison (pending run completion):** a side-by-side x–z view of the developed
+mean plume for the three termini — vertical 90°, overcut 63.4°, and overcut 70° + R=10 fillet —
+will go here once `cg_overcut70_fillet` reaches its averaging window, to show the fillet case
+attaching where the plain 63.4° overcut detaches.
+
+<!-- ![Three-case terminus comparison](figures/attachment_case_comparison.png) -->
+
 ## What's different vs. `../newLES` (0.90.7, gravity-tilt)
 
 | | `newLES` (0.90.7) | `newLES_cg` (0.109) |
@@ -59,10 +96,13 @@ Ice = immersed solid where `x < x_face(z) = xf_a + xf_b·z`, with β = 90 − fa
 - **Vertical** (`--face_angle=90`): a thin immersed slab (so all cases use the same immersed path).
 
 A **subglacial channel** (the discharge conduit) is carved out of the ice base: a `W×H` opening
-(`--outlet_w/h`, default **24 × 10 m**) extruded in x from the domain back-wall to the terminus
+(`--outlet_w/h`, default **24 × 6 m**) extruded in x from the domain back-wall to the terminus
 face, with a minimum length `--channel_len` (the face shifts out if the natural length is
 shorter). The top edge of the opening is **flared** (`--flare` m over `--flare_len` m) so the
-discharge exits under a chamfered roof rather than separating off a sharp corner.
+discharge exits under a rounded roof rather than separating off a sharp corner. The flare shape is
+set by `--flare_curve`: **0** = linear ramp, **1** = cosine smoothstep, **2** = **circular fillet**
+of radius `R = --flare` whose centre is a height `R` above the channel roof, sweeping the ice–ocean
+interface from horizontal to vertical at the opening (a Coandá lip; see the attachment case above).
 
 **Injection modes (`--inject`):**
 
@@ -103,12 +143,16 @@ RK3 is ~5× slower than QAB2 (3 pressure solves/step), so the full 45-min run ta
 
 `DIAG=1` runs a short (2 min), 1-s-slice diagnostic in a `<OUTDIR>_diag` folder — for catching a
 NaN's location fast. Experiment knobs pass through `-v`: `TS` (RK3/QAB2), `WENO`, `NU`
-(explicit viscosity), `SLOPE` (floor ramp), `INJECT` (open/closed), `TAG` (parallel runs).
+(explicit viscosity), `SLOPE` (floor ramp), `INJECT` (open/closed), `TAG` (parallel runs),
+`FACE` (overcut angle, e.g. 70), `OW`/`OH` (outlet width/height), `FCURVE` (0 linear / 1 cosine /
+**2 circular** roof fillet), `FLARE`/`FLEN` (fillet radius / flare length), `RA`/`RL` (ridge
+amplitude/wavelength), `AVGINT`/`AVGWIN` (3-D time-average record interval / window, minutes).
 
 Driver flags: `--discharge --outlet_w/h --Lz --Lx --fine_x --dz --dx_max --fine_y --dy_max
---fine_z --dz_surf --channel_len --flare --flare_len --sig_src --inject --timestepper --weno
---nu --bottom_slope --stop_time --output_interval --slice_interval --checkpoint_interval
---wall_time_limit --terminus --face_angle --arch --simname --outdir`.
+--fine_z --dz_surf --channel_len --flare --flare_len --flare_curve --ridge_amp --ridge_len
+--sig_src --inject --timestepper --weno --nu --bottom_slope --avg_interval --avg_window
+--stop_time --output_interval --slice_interval --checkpoint_interval --wall_time_limit
+--terminus --face_angle --arch --simname --outdir`.
 
 ## Visualizing results — plot where the data lives, move only the light files
 
