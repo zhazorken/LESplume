@@ -67,6 +67,14 @@ qsub -v CASE=overcut,FACE=70,OH=8,TS=RK3,FCURVE=2,FLARE=10,TAG=fillet,OUTDIR=/gl
 If it still detaches at `U_in = 0.78`, the next lever is a bigger outlet — `OH=10` → 0.63 m/s or
 `OH=12` → 0.52 m/s (the paper's attached value) — no code change needed.
 
+**First result (11.5 min) — the plume attaches.** The core stays within a few metres of the 70°
+face up to z ≈ 70 m and follows the receding face rather than detaching seaward (core offset
+1.5 / 4.7 / 7.6 / 13.2 / 24.1 m at z = 15 / 30 / 50 / 70 / 100 m — *inside* the ~5.5 → 36 m a purely
+vertical rise would give, and far short of the 63.4° case which ran past vertical and detached).
+Mean of the last 300 s; the full 45-min average is pending.
+
+![Overcut 70° + R=10 fillet — plume holds on the face](figures/attach_overcut70_fillet.png)
+
 **Three-case comparison (pending run completion):** a side-by-side x–z view of the developed
 mean plume for the three termini — vertical 90°, overcut 63.4°, and overcut 70° + R=10 fillet —
 will go here once `cg_overcut70_fillet` reaches its averaging window, to show the fillet case
