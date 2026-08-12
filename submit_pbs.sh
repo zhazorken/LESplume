@@ -99,7 +99,7 @@ EXP=""
 # NOTE: do NOT add --pkgimages=no — it disables Julia's precompiled images and breaks CUDA.jl's
 # GPU detection (has_cuda_gpu()→false ⇒ "a CUDA GPU was not found"). Plain --project sees the A100.
 time $JULIA --project iceplume.jl \
-    $ARGS $DOMAIN --arch=gpu --discharge=150 --outlet_w=${OW:-24} --outlet_h=${OH:-6} --Lz=150 \
+    $ARGS $DOMAIN --arch=gpu --discharge=${DISCH:-150} --outlet_w=${OW:-24} --outlet_h=${OH:-6} --Lz=150 \
     --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
     $EXP $EXTRA \
     2>&1 | tee logs/${CASE}${SFX}.out
