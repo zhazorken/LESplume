@@ -41,6 +41,7 @@ function parse_cli()
     cli = Dict{String,Any}(
         "simname" => "iceplume_cg", "arch" => "auto", "terminus" => "overcut",
         "face_angle" => 90.0, "discharge" => 150.0, "outlet_w" => 24.0, "outlet_h" => 6.0,
+        "discharge_T" => 0.0, "discharge_S" => 0.0,   # discharge water T[°C]/S[g/kg] at the outlet (0,0=pure meltwater; set >0 to pre-entrain deep fjord water, per BPT)
         "Lz" => 150.0, "Ly" => 192.0, "Lx" => 500.0, "dz" => 0.75, "fine_x" => 375.0,
         "dx_max" => 18.6, "stop_time" => 45.0, "output_interval" => 300.0,   # dz/fine_x/dx_max = Ovall 2025
         "slice_interval" => 10.0,   # cadence [s] for the 2-D midy/face slices (drop to 1 for NaN diagnosis)
@@ -209,6 +210,7 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
           U_out, U_out_peak, z_out, δ_out, t_ramp = 60.0,
           σ_src = cli["sig_src"], σ_spg = 10.0, x_src = 3 * dx_fine,
           L_sponge = 60.0, L_flare = cli["flare_len"],
+          T_d = cli["discharge_T"], S_d = cli["discharge_S"],   # discharge water properties (pre-entrainment)
           Cᴰ = 2.5e-3)
 @info "Derived" U_in U_in_peak U_out U_out_peak x_gl
 #---
@@ -232,8 +234,8 @@ params = (; Lz, Lx, Ly, xf_a, xf_b,
 @inline _bump(y,z,p) = clamp((p.W/2 - abs(y))/p.δ_e, 0.0, 1.0) * clamp((p.H - z)/p.δ_e, 0.0, 1.0)
 @inline _ramp(t,p) = min(t / p.t_ramp, 1.0)
 @inline src_u(x,y,z,t,u,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(u - p.U_in_peak*_bump(y,z,p)), zero(u))
-@inline src_T(x,y,z,t,T,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(T - 0.0), zero(T))
-@inline src_S(x,y,z,t,S,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(S - 0.0), zero(S))
+@inline src_T(x,y,z,t,T,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(T - p.T_d), zero(T))
+@inline src_S(x,y,z,t,S,p) = ifelse(in_channel(x,y,z,p), -nrate(x,z,p)*(S - p.S_d), zero(S))
 
 # Fjord (east) sponge: drive the compensating outflow (u→U_out above 60 m depth) and relax T,S→ambient.
 @inline east_frac(x, p) = clamp((x - (p.Lx - p.L_sponge)) / p.L_sponge, 0.0, 1.0)
