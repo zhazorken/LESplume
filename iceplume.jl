@@ -349,8 +349,11 @@ ckpt = "checkpoint_" * prefix
 outdir = isempty(cli["outdir"]) ? joinpath(rundir, "output") : cli["outdir"]
 mkpath(outdir)
 pickup = any(startswith("$(ckpt)_iteration"), readdir(outdir))
-overwrite = !pickup
-pickup && @warn "Checkpoint found for $prefix in $outdir — resuming."
+# Create fresh output files when they don't exist yet — even on pickup. This lets a run be SEEDED
+# from a checkpoint copied under a new simname (fast warm-start of a new experiment): pickup=true
+# restores the state, but the (nonexistent) output NetCDFs must be created, not appended to.
+overwrite = !isfile(joinpath(outdir, "$(prefix)_fields.nc"))
+pickup && @warn "Checkpoint found for $prefix in $outdir — resuming (fresh output: $overwrite)."
 
 # Metadata so the (non-rotating) quick-look can blank the immersed ice and label geometry.
 # y-z "face" slice: a few cells into the fluid off the grounding line (a fixed near-wall x=1
