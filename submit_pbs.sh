@@ -85,6 +85,9 @@ EXP=""
 [ -n "${RL:-}" ]     && EXP="$EXP --ridge_len=$RL"     # ridge wavelength in y [m]
 [ -n "${AVGINT:-}" ] && EXP="$EXP --avg_interval=$AVGINT"   # 3-D time-avg record interval [min] (default 15)
 [ -n "${AVGWIN:-}" ] && EXP="$EXP --avg_window=$AVGWIN"     # 3-D time-avg window [min] (default 15). 25-35 min: AVGINT=35,AVGWIN=10
+[ -n "${DCFL:-}" ]   && EXP="$EXP --diff_cfl=$DCFL"         # diffusive CFL for the Δt wizard (e.g. 0.5); default off
+[ -n "${MAXDT:-}" ]  && EXP="$EXP --max_dt=$MAXDT"          # Δt cap [s] (default 1.0)
+[ -n "${CFL:-}" ]    && EXP="$EXP --cfl=$CFL"               # advective CFL (default 0.35)
 [ -n "${DISCHT:-}" ] && EXP="$EXP --discharge_T=$DISCHT"    # discharge water T [°C] at outlet (pre-entrainment; 0=pure melt)
 [ -n "${DISCHS:-}" ] && EXP="$EXP --discharge_S=$DISCHS"    # discharge water S [g/kg] at outlet (pre-entrainment; 0=pure melt)
 [ -n "${FCURVE:-}" ] && EXP="$EXP --flare_curve=$FCURVE"    # 1 = curved (Coandá) outlet ramp; 0 = linear

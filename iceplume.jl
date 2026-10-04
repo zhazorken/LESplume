@@ -41,6 +41,7 @@ function parse_cli()
     cli = Dict{String,Any}(
         "simname" => "iceplume_cg", "arch" => "auto", "terminus" => "overcut",
         "face_angle" => 90.0, "discharge" => 150.0, "outlet_w" => 24.0, "outlet_h" => 6.0,
+        "cfl" => 0.35, "diff_cfl" => Inf, "max_dt" => 1.0,   # time-step control: advective CFL, diffusive (AMD) CFL, Δt cap [s]
         "discharge_T" => 0.0, "discharge_S" => 0.0,   # discharge water T[°C]/S[g/kg] at the outlet (0,0=pure meltwater; set >0 to pre-entrain deep fjord water, per BPT)
         "Lz" => 150.0, "Ly" => 192.0, "Lx" => 500.0, "dz" => 0.75, "fine_x" => 375.0,
         "dx_max" => 18.6, "stop_time" => 45.0, "output_interval" => 300.0,   # dz/fine_x/dx_max = Ovall 2025
@@ -321,7 +322,10 @@ set!(model, u = uᵢ, v = vᵢ, w = wᵢ, T = Tᵢ, S = Sᵢ)
 wtl = cli["wall_time_limit"]
 simulation = Simulation(model; Δt = Δt₀, stop_time = cli["stop_time"] * minutes,
                         wall_time_limit = isfinite(wtl) ? wtl * 3600 : Inf)
-simulation.callbacks[:wizard] = Callback(TimeStepWizard(cfl=0.35, max_change=1.05, min_change=0.2, max_Δt=1.0),
+# diffusive_cfl makes the wizard also respect the AMD subgrid-diffusivity stability limit (the
+# advective CFL alone let Δt grow when the flow slowed, and the AMD diffusion then went unstable → NaN).
+simulation.callbacks[:wizard] = Callback(TimeStepWizard(cfl=cli["cfl"], diffusive_cfl=cli["diff_cfl"],
+                                                        max_change=1.05, min_change=0.2, max_Δt=cli["max_dt"]),
                                          IterationInterval(5))
 using Oceanostics.ProgressMessengers: BasicTimeMessenger
 simulation.callbacks[:progress] = Callback(BasicTimeMessenger(), IterationInterval(50))
