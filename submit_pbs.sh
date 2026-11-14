@@ -85,6 +85,9 @@ EXP=""
 [ -n "${RL:-}" ]     && EXP="$EXP --ridge_len=$RL"     # ridge wavelength in y [m]
 [ -n "${AVGINT:-}" ] && EXP="$EXP --avg_interval=$AVGINT"   # 3-D time-avg record interval [min] (default 15)
 [ -n "${AVGWIN:-}" ] && EXP="$EXP --avg_window=$AVGWIN"     # 3-D time-avg window [min] (default 15). 25-35 min: AVGINT=35,AVGWIN=10
+# STOP (model-min, default 45) + CKPT (checkpoint interval, model-min, default 3): end a leg EXACTLY on an
+# averaging-window boundary with a checkpoint there, so no AVGWIN window ever spans a restart (the online
+# average resets on pickup). E.g. 5-min windows: CKPT=5,AVGINT=5,AVGWIN=5,STOP=35 then STOP=45.
 [ -n "${DCFL:-}" ]   && EXP="$EXP --diff_cfl=$DCFL"         # diffusive CFL for the Δt wizard (e.g. 0.5); default off
 [ -n "${MAXDT:-}" ]  && EXP="$EXP --max_dt=$MAXDT"          # Δt cap [s] (default 1.0)
 [ -n "${CFL:-}" ]    && EXP="$EXP --cfl=$CFL"               # advective CFL (default 0.35)
@@ -105,7 +108,7 @@ EXP=""
 # GPU detection (has_cuda_gpu()→false ⇒ "a CUDA GPU was not found"). Plain --project sees the A100.
 time $JULIA --project iceplume.jl \
     $ARGS $DOMAIN --arch=gpu --discharge=${DISCH:-150} --outlet_w=${OW:-24} --outlet_h=${OH:-6} --Lz=150 \
-    --stop_time=45 --output_interval=900 --checkpoint_interval=3 --wall_time_limit=22.8 --outdir="$OUTDIR" \
+    --stop_time=${STOP:-45} --output_interval=900 --checkpoint_interval=${CKPT:-3} --wall_time_limit=22.8 --outdir="$OUTDIR" \
     $EXP $EXTRA \
     2>&1 | tee logs/${CASE}${SFX}.out
 
